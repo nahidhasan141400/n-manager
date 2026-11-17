@@ -1,0 +1,25 @@
+server:
+  host: "127.0.0.1"
+  port: 8080
+  # tls_cert and tls_key are required when host is not a loopback address.
+  tls_cert: ""
+  tls_key: ""
+
+security:
+  admin_password_hash: "$2a$12$replace-with-bcrypt-hash"
+  session_secret: "replace-with-a-long-random-secret"
+  session_ttl_minutes: 720
+  # cookie_secure: auto | true | false
+  cookie_secure: "auto"
+  # dry_run validates privileged operations and does not change the host.
+  dry_run: false
+
+database:
+  driver: "sqlite"
+  path: "/var/lib/n-manager/nmanager.db"
+
+monitoring:
+  refresh_interval: 5
+
+privileged:
+  command: "/usr/bin/n-manager"

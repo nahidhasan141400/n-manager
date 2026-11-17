@@ -1,0 +1,2 @@
+Defaults:nmanager !requiretty
+nmanager ALL=(root) NOPASSWD: /usr/bin/n-manager priv *

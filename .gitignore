@@ -1,0 +1,8 @@
+/n-manager
+/dev-data/
+/config.yaml
+/web/node_modules/
+/internal/webui/dist/
+*.db
+*.db-wal
+*.db-shm
