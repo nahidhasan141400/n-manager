@@ -11,7 +11,7 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-const LatestVersion = 1
+const LatestVersion = 3
 
 var migrations = []string{
 	`CREATE TABLE sessions (
@@ -34,6 +34,26 @@ var migrations = []string{
 	CREATE TABLE app_settings (
 		key TEXT PRIMARY KEY,
 		value TEXT NOT NULL
+	);`,
+	`CREATE TABLE servers (
+		id TEXT PRIMARY KEY,
+		name TEXT NOT NULL,
+		host TEXT NOT NULL,
+		port INTEGER NOT NULL,
+		username TEXT NOT NULL,
+		password BLOB NOT NULL,
+		host_key BLOB NOT NULL,
+		created_at INTEGER NOT NULL,
+		updated_at INTEGER NOT NULL
+	);`,
+	`CREATE TABLE debug_log (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		created_at INTEGER NOT NULL,
+		level TEXT NOT NULL,
+		server TEXT NOT NULL DEFAULT '',
+		kind TEXT NOT NULL,
+		message TEXT NOT NULL,
+		detail TEXT NOT NULL DEFAULT ''
 	);`,
 }
 

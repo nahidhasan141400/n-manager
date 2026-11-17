@@ -1,12 +1,13 @@
 package nginx
 
 import (
+	"context"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 
+	"n-manager/internal/remote"
 	"n-manager/internal/validate"
 )
 
@@ -39,16 +40,16 @@ type Layout struct {
 	Enabled   string
 }
 
-func Detect(root string) (Layout, error) {
+func Detect(ctx context.Context, root string) (Layout, error) {
 	if root == "" {
 		root = "/etc/nginx"
 	}
 	sites := filepath.Join(root, "sites-available")
-	if st, err := os.Stat(sites); err == nil && st.IsDir() {
+	if st, err := remote.Stat(ctx, sites); err == nil && st.IsDir() {
 		return Layout{Kind: "sites", Available: sites, Enabled: filepath.Join(root, "sites-enabled")}, nil
 	}
 	confd := filepath.Join(root, "conf.d")
-	if st, err := os.Stat(confd); err == nil && st.IsDir() {
+	if st, err := remote.Stat(ctx, confd); err == nil && st.IsDir() {
 		return Layout{Kind: "conf", Available: confd, Enabled: confd}, nil
 	}
 	return Layout{}, fmt.Errorf("nginx configuration directory was not found")
@@ -227,78 +228,78 @@ func Prepare(spec Spec) (string, error) {
 
 type Tester func() (string, error)
 
-func Apply(layout Layout, name, content string, enabled bool, test Tester) error {
+func Apply(ctx context.Context, layout Layout, name, content string, enabled bool, test Tester) error {
 	if err := validate.SiteName(name); err != nil {
 		return err
 	}
 	if err := validate.NginxContent(content); err != nil {
 		return err
 	}
-	if err := os.MkdirAll(layout.Available, 0o755); err != nil {
+	if err := remote.MkdirAll(ctx, layout.Available, 0o755); err != nil {
 		return err
 	}
 	if layout.Kind == "sites" {
-		if err := os.MkdirAll(layout.Enabled, 0o755); err != nil {
+		if err := remote.MkdirAll(ctx, layout.Enabled, 0o755); err != nil {
 			return err
 		}
 	}
 	path := filepath.Join(layout.Available, name+".conf")
-	prev, hadPrev, err := readOptional(path)
+	prev, hadPrev, err := readOptional(ctx, path)
 	if err != nil {
 		return err
 	}
-	prevLink, hadLink, err := linkState(layout, name)
+	prevLink, hadLink, err := linkState(ctx, layout, name)
 	if err != nil {
 		return err
 	}
-	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+	if err := remote.WriteFile(ctx, path, []byte(content), 0o644); err != nil {
 		return err
 	}
-	if err := setEnabled(layout, name, enabled); err != nil {
-		restore(path, prev, hadPrev)
-		_ = restoreLink(layout, name, prevLink, hadLink)
+	if err := setEnabled(ctx, layout, name, enabled); err != nil {
+		restore(ctx, path, prev, hadPrev)
+		_ = restoreLink(ctx, layout, name, prevLink, hadLink)
 		return err
 	}
 	if _, err := test(); err != nil {
-		restore(path, prev, hadPrev)
-		_ = restoreLink(layout, name, prevLink, hadLink)
+		restore(ctx, path, prev, hadPrev)
+		_ = restoreLink(ctx, layout, name, prevLink, hadLink)
 		_, _ = test()
 		return fmt.Errorf("nginx -t failed: %w", err)
 	}
 	return nil
 }
 
-func Delete(layout Layout, name string, test Tester) error {
+func Delete(ctx context.Context, layout Layout, name string, test Tester) error {
 	if err := validate.SiteName(name); err != nil {
 		return err
 	}
 	path := filepath.Join(layout.Available, name+".conf")
-	content, err := os.ReadFile(path)
+	content, err := remote.ReadFile(ctx, path)
 	if err != nil {
 		return err
 	}
 	if err := validate.NginxContent(string(content)); err != nil {
 		return err
 	}
-	prevLink, hadLink, err := linkState(layout, name)
+	prevLink, hadLink, err := linkState(ctx, layout, name)
 	if err != nil {
 		return err
 	}
-	if err := os.Remove(path); err != nil {
+	if err := remote.Remove(ctx, path); err != nil {
 		return err
 	}
-	_ = removeEnabled(layout, name)
+	_ = removeEnabled(ctx, layout, name)
 	if _, err := test(); err != nil {
-		_ = os.WriteFile(path, content, 0o644)
-		_ = restoreLink(layout, name, prevLink, hadLink)
+		_ = remote.WriteFile(ctx, path, content, 0o644)
+		_ = restoreLink(ctx, layout, name, prevLink, hadLink)
 		_, _ = test()
 		return fmt.Errorf("nginx -t failed: %w", err)
 	}
 	return nil
 }
 
-func List(layout Layout) ([]Site, error) {
-	entries, err := os.ReadDir(layout.Available)
+func List(ctx context.Context, layout Layout) ([]Site, error) {
+	entries, err := remote.ReadDir(ctx, layout.Available)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return []Site{}, nil
@@ -316,7 +317,7 @@ func List(layout Layout) ([]Site, error) {
 			continue
 		}
 		path := filepath.Join(layout.Available, filename)
-		b, err := os.ReadFile(path)
+		b, err := remote.ReadFile(ctx, path)
 		if err != nil || !strings.Contains(string(b), "# managed-by: n-manager") {
 			continue
 		}
@@ -324,7 +325,7 @@ func List(layout Layout) ([]Site, error) {
 		enabled := !disabledFile
 		if layout.Kind == "sites" {
 			var err error
-			enabled, err = isEnabled(layout, name)
+			enabled, err = isEnabled(ctx, layout, name)
 			if err != nil {
 				return nil, err
 			}
@@ -339,68 +340,68 @@ func List(layout Layout) ([]Site, error) {
 	return out, nil
 }
 
-func Read(layout Layout, name string) (Site, error) {
+func Read(ctx context.Context, layout Layout, name string) (Site, error) {
 	if err := validate.SiteName(name); err != nil {
 		return Site{}, err
 	}
 	path := filepath.Join(layout.Available, name+".conf")
-	b, err := os.ReadFile(path)
+	b, err := remote.ReadFile(ctx, path)
 	if err != nil {
 		return Site{}, err
 	}
 	if err := validate.NginxContent(string(b)); err != nil {
 		return Site{}, err
 	}
-	enabled, err := isEnabled(layout, name)
+	enabled, err := isEnabled(ctx, layout, name)
 	if err != nil {
 		return Site{}, err
 	}
 	return Site{Name: name, Enabled: enabled, Path: path, Config: string(b), Domains: serverName(string(b))}, nil
 }
 
-func setEnabled(layout Layout, name string, enabled bool) error {
+func setEnabled(ctx context.Context, layout Layout, name string, enabled bool) error {
 	if !enabled {
-		return removeEnabled(layout, name)
+		return removeEnabled(ctx, layout, name)
 	}
 	if layout.Kind == "conf" {
 		live := filepath.Join(layout.Available, name+".conf")
 		disabled := live + ".disabled"
-		if _, err := os.Stat(live); err == nil {
-			_ = os.Remove(disabled)
+		if _, err := remote.Stat(ctx, live); err == nil {
+			_ = remote.Remove(ctx, disabled)
 			return nil
 		}
-		if _, err := os.Stat(disabled); err == nil {
-			return os.Rename(disabled, live)
+		if _, err := remote.Stat(ctx, disabled); err == nil {
+			return remote.Rename(ctx, disabled, live)
 		}
 		return nil
 	}
 	link := filepath.Join(layout.Enabled, name+".conf")
 	target := filepath.Join(layout.Available, name+".conf")
-	if err := os.Remove(link); err != nil && !os.IsNotExist(err) {
+	if err := remote.Remove(ctx, link); err != nil && !os.IsNotExist(err) {
 		return err
 	}
-	return os.Symlink(target, link)
+	return remote.Symlink(ctx, target, link)
 }
 
-func removeEnabled(layout Layout, name string) error {
+func removeEnabled(ctx context.Context, layout Layout, name string) error {
 	if layout.Kind == "conf" {
 		live := filepath.Join(layout.Available, name+".conf")
 		disabled := live + ".disabled"
-		if _, err := os.Stat(live); err == nil {
-			return os.Rename(live, disabled)
+		if _, err := remote.Stat(ctx, live); err == nil {
+			return remote.Rename(ctx, live, disabled)
 		}
 		return nil
 	}
 	link := filepath.Join(layout.Enabled, name+".conf")
-	if err := os.Remove(link); err != nil && !os.IsNotExist(err) {
+	if err := remote.Remove(ctx, link); err != nil && !os.IsNotExist(err) {
 		return err
 	}
 	return nil
 }
 
-func isEnabled(layout Layout, name string) (bool, error) {
+func isEnabled(ctx context.Context, layout Layout, name string) (bool, error) {
 	if layout.Kind == "conf" {
-		_, err := os.Stat(filepath.Join(layout.Available, name+".conf"))
+		_, err := remote.Stat(ctx, filepath.Join(layout.Available, name+".conf"))
 		if err == nil {
 			return true, nil
 		}
@@ -409,7 +410,7 @@ func isEnabled(layout Layout, name string) (bool, error) {
 		}
 		return false, err
 	}
-	_, err := os.Stat(filepath.Join(layout.Enabled, name+".conf"))
+	_, err := remote.Stat(ctx, filepath.Join(layout.Enabled, name+".conf"))
 	if err == nil {
 		return true, nil
 	}
@@ -419,12 +420,12 @@ func isEnabled(layout Layout, name string) (bool, error) {
 	return false, err
 }
 
-func linkState(layout Layout, name string) (string, bool, error) {
+func linkState(ctx context.Context, layout Layout, name string) (string, bool, error) {
 	if layout.Kind != "sites" {
 		return "", false, nil
 	}
 	link := filepath.Join(layout.Enabled, name+".conf")
-	target, err := os.Readlink(link)
+	target, err := remote.Readlink(ctx, link)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return "", false, nil
@@ -434,20 +435,20 @@ func linkState(layout Layout, name string) (string, bool, error) {
 	return target, true, nil
 }
 
-func restoreLink(layout Layout, name, target string, had bool) error {
+func restoreLink(ctx context.Context, layout Layout, name, target string, had bool) error {
 	if layout.Kind != "sites" {
 		return nil
 	}
 	link := filepath.Join(layout.Enabled, name+".conf")
-	_ = os.Remove(link)
+	_ = remote.Remove(ctx, link)
 	if had {
-		return os.Symlink(target, link)
+		return remote.Symlink(ctx, target, link)
 	}
 	return nil
 }
 
-func readOptional(path string) (string, bool, error) {
-	b, err := os.ReadFile(path)
+func readOptional(ctx context.Context, path string) (string, bool, error) {
+	b, err := remote.ReadFile(ctx, path)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return "", false, nil
@@ -457,12 +458,12 @@ func readOptional(path string) (string, bool, error) {
 	return string(b), true, nil
 }
 
-func restore(path, prev string, had bool) {
+func restore(ctx context.Context, path, prev string, had bool) {
 	if !had {
-		_ = os.Remove(path)
+		_ = remote.Remove(ctx, path)
 		return
 	}
-	_ = os.WriteFile(path, []byte(prev), 0o644)
+	_ = remote.WriteFile(ctx, path, []byte(prev), 0o644)
 }
 
 func serverName(content string) string {
@@ -475,8 +476,11 @@ func serverName(content string) string {
 	return ""
 }
 
-func Syntax(content string) (string, error) {
-	if _, err := exec.LookPath("nginx"); err != nil {
+func Syntax(ctx context.Context, content string) (string, error) {
+	if _, ok := remote.From(ctx).(remote.Local); !ok {
+		return "", nil
+	}
+	if _, err := remote.Run(ctx, "nginx", []string{"-v"}, ""); err != nil {
 		return "", fmt.Errorf("nginx is not installed")
 	}
 	dir, err := os.MkdirTemp("", "n-manager-nginx-*")
@@ -493,17 +497,11 @@ func Syntax(content string) (string, error) {
 	if err := os.WriteFile(conf, []byte(wrapper), 0o644); err != nil {
 		return "", err
 	}
-	return runCmd("nginx", "-t", "-c", conf)
+	return remote.Run(ctx, "nginx", []string{"-t", "-c", conf}, "")
 }
 
-func LiveTest() (string, error) {
-	return runCmd("nginx", "-t")
-}
-
-func runCmd(name string, args ...string) (string, error) {
-	cmd := exec.Command(name, args...)
-	out, err := cmd.CombinedOutput()
-	return string(out), err
+func LiveTest(ctx context.Context) (string, error) {
+	return remote.Run(ctx, "nginx", []string{"-t"}, "")
 }
 
 func trimAll(in []string) []string {
@@ -517,33 +515,9 @@ func trimAll(in []string) []string {
 	return out
 }
 
-func Tail(path string, lines int) (string, error) {
+func Tail(ctx context.Context, path string, lines int) (string, error) {
 	if err := validate.ReadablePath(path); err != nil {
 		return "", err
 	}
-	f, err := os.Open(path)
-	if err != nil {
-		return "", err
-	}
-	defer f.Close()
-	st, err := f.Stat()
-	if err != nil {
-		return "", err
-	}
-	size := st.Size()
-	readSize := int64(256 * 1024)
-	if size < readSize {
-		readSize = size
-	}
-	buf := make([]byte, readSize)
-	if readSize > 0 {
-		if _, err := f.ReadAt(buf, size-readSize); err != nil {
-			return "", err
-		}
-	}
-	parts := strings.Split(string(buf), "\n")
-	if len(parts) > lines {
-		parts = parts[len(parts)-lines:]
-	}
-	return strings.Join(parts, "\n"), nil
+	return remote.ReadTail(ctx, path, lines)
 }

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
-import { Download, Folder, KeyRound, Lock, LockOpen, Play, Power, PowerOff, RefreshCw, RotateCw, Save, ScrollText, Square, Trash2, Upload, UserPlus, X } from "lucide-react";
+import { Download, Folder, KeyRound, Lock, LockOpen, Play, Power, PowerOff, RefreshCw, RotateCw, Save, ScrollText, Square, Trash2, Upload, UserPlus } from "lucide-react";
 import { api } from "../api";
-import { Badge, Button, Card, Field, inputClass, useConfirm, useToast } from "../components/ui";
+import { Badge, Button, Card, Field, Modal, Placeholder, RowActions, useConfirm, useToast, TextInput } from "../components/ui";
 import type { ActionResult, FTPStatus } from "../types";
 
 export function FtpPage() {
@@ -27,10 +27,12 @@ export function FtpPage() {
   const [homes, setHomes] = useState<string[]>([]);
   const [password, setPassword] = useState("");
   const [editing, setEditing] = useState<string | null>(null);
+  const [userOpen, setUserOpen] = useState(false);
   const [nextPassword, setNextPassword] = useState("");
   const [logs, setLogs] = useState<string | null>(null);
   const [logTitle, setLogTitle] = useState("Logs");
   const [busy, setBusy] = useState(false);
+  const [ready, setReady] = useState(false);
   const toast = useToast();
   const confirm = useConfirm();
 
@@ -56,7 +58,9 @@ export function FtpPage() {
   }, []);
 
   useEffect(() => {
-    load().catch((err: unknown) => toast("err", err instanceof Error ? err.message : "request failed"));
+    load()
+      .catch((err: unknown) => toast("err", err instanceof Error ? err.message : "request failed"))
+      .finally(() => setReady(true));
     api<{ paths: string[] }>("/api/ftp/homes")
       .then((res) => setHomes(res.paths))
       .catch(() => setHomes([]));
@@ -84,10 +88,6 @@ export function FtpPage() {
   }
 
   async function showLog(kind: "logs" | "transfers") {
-    if (logs !== null && logTitle === (kind === "logs" ? "Logs" : "Transfers")) {
-      setLogs(null);
-      return;
-    }
     const path = kind === "logs" ? "/api/ftp/logs" : "/api/ftp/transfers";
     try {
       const res = await api<{ logs: string; error?: string }>(path);
@@ -104,14 +104,14 @@ export function FtpPage() {
 
   return (
     <div className="space-y-4">
-      <Card title="FTP" action={<Badge value={status?.installed ? status.active : "off"} />}>
+      <Card loading={busy || !ready} title="FTP" action={<Badge value={status?.installed ? status.active : "off"} />}>
         <div className="mb-4 grid gap-2 sm:grid-cols-3 xl:grid-cols-6">
-          <Fact label="Version" value={status?.version || "—"} />
-          <Fact label="Port" value={String(status?.port || 21)} />
-          <Fact label="Passive" value={status ? `${status.pasv_min}–${status.pasv_max}` : "—"} />
-          <Fact label="Sessions" value={String(status?.sessions.length ?? 0)} />
-          <Fact label="Clients" value={status ? `${status.max_clients} / ${status.max_per_ip}` : "—"} />
-          <Fact label="Rate" value={status ? rate : "—"} />
+          <Fact pending={!ready} label="Version" value={status?.version || "—"} />
+          <Fact pending={!ready} label="Port" value={String(status?.port || 21)} />
+          <Fact pending={!ready} label="Passive" value={status ? `${status.pasv_min}–${status.pasv_max}` : "—"} />
+          <Fact pending={!ready} label="Sessions" value={String(status?.sessions.length ?? 0)} />
+          <Fact pending={!ready} label="Clients" value={status ? `${status.max_clients} / ${status.max_per_ip}` : "—"} />
+          <Fact pending={!ready} label="Rate" value={status ? rate : "—"} />
         </div>
         <div className="flex flex-wrap items-center gap-2">
           {!status?.installed && (
@@ -133,18 +133,12 @@ export function FtpPage() {
             </>
           )}
         </div>
-        {logs !== null && (
-          <div className="mt-4 overflow-hidden rounded-lg border border-[var(--border)] bg-[var(--input)]">
-            <div className="flex items-center justify-between border-b border-[var(--border)] px-3 py-2">
-              <span className="text-xs text-[var(--muted)]">{logTitle}</span>
-              <button type="button" aria-label="Close" className="grid h-7 w-7 place-items-center rounded-md hover:bg-[var(--hover)]" onClick={() => setLogs(null)}><X size={14} /></button>
-            </div>
-            <pre className="max-h-80 overflow-auto p-3 text-xs leading-5">{logs || "—"}</pre>
-          </div>
-        )}
+        <Modal open={logs !== null} wide title={logTitle} onOpenChange={(open) => { if (!open) setLogs(null); }}>
+          <pre className="max-h-96 overflow-auto whitespace-pre-wrap text-xs leading-5">{logs || "—"}</pre>
+        </Modal>
       </Card>
 
-      <Card title="Configuration">
+      <Card loading={busy || !ready} title="Configuration">
         <form
           className="grid gap-2 sm:grid-cols-2 xl:grid-cols-4"
           onSubmit={(event) => {
@@ -169,17 +163,17 @@ export function FtpPage() {
             });
           }}
         >
-          <Field label="Port"><input className={inputClass} type="number" value={port} onChange={(e) => setPort(Number(e.target.value))} /></Field>
-          <Field label="Passive address"><input className={inputClass} value={pasvAddress} onChange={(e) => setPasvAddress(e.target.value)} placeholder="203.0.113.10" /></Field>
-          <Field label="Passive min"><input className={inputClass} type="number" value={pasvMin} onChange={(e) => setPasvMin(Number(e.target.value))} /></Field>
-          <Field label="Passive max"><input className={inputClass} type="number" value={pasvMax} onChange={(e) => setPasvMax(Number(e.target.value))} /></Field>
-          <Field label="Umask"><input className={inputClass} value={umask} onChange={(e) => setUmask(e.target.value)} maxLength={3} /></Field>
-          <Field label="Banner"><input className={inputClass} value={banner} onChange={(e) => setBanner(e.target.value)} /></Field>
-          <Field label="Idle timeout"><input className={inputClass} type="number" value={idle} onChange={(e) => setIdle(Number(e.target.value))} /></Field>
-          <Field label="Data timeout"><input className={inputClass} type="number" value={dataTimeout} onChange={(e) => setDataTimeout(Number(e.target.value))} /></Field>
-          <Field label="Max clients"><input className={inputClass} type="number" value={maxClients} onChange={(e) => setMaxClients(Number(e.target.value))} /></Field>
-          <Field label="Max per IP"><input className={inputClass} type="number" value={maxPerIP} onChange={(e) => setMaxPerIP(Number(e.target.value))} /></Field>
-          <Field label="Max rate KB/s"><input className={inputClass} type="number" value={rateKB} onChange={(e) => setRateKB(Number(e.target.value))} /></Field>
+          <Field label="Port"><TextInput type="number" value={port} onChange={(e) => setPort(Number(e.target.value))} /></Field>
+          <Field label="Passive address"><TextInput value={pasvAddress} onChange={(e) => setPasvAddress(e.target.value)} placeholder="203.0.113.10" /></Field>
+          <Field label="Passive min"><TextInput type="number" value={pasvMin} onChange={(e) => setPasvMin(Number(e.target.value))} /></Field>
+          <Field label="Passive max"><TextInput type="number" value={pasvMax} onChange={(e) => setPasvMax(Number(e.target.value))} /></Field>
+          <Field label="Umask"><TextInput value={umask} onChange={(e) => setUmask(e.target.value)} maxLength={3} /></Field>
+          <Field label="Banner"><TextInput value={banner} onChange={(e) => setBanner(e.target.value)} /></Field>
+          <Field label="Idle timeout"><TextInput type="number" value={idle} onChange={(e) => setIdle(Number(e.target.value))} /></Field>
+          <Field label="Data timeout"><TextInput type="number" value={dataTimeout} onChange={(e) => setDataTimeout(Number(e.target.value))} /></Field>
+          <Field label="Max clients"><TextInput type="number" value={maxClients} onChange={(e) => setMaxClients(Number(e.target.value))} /></Field>
+          <Field label="Max per IP"><TextInput type="number" value={maxPerIP} onChange={(e) => setMaxPerIP(Number(e.target.value))} /></Field>
+          <Field label="Max rate KB/s"><TextInput type="number" value={rateKB} onChange={(e) => setRateKB(Number(e.target.value))} /></Field>
           <div className="flex flex-wrap items-center gap-4 px-1 sm:col-span-2 xl:col-span-4">
             <Check label="Uploads" checked={write} onChange={setWrite} />
             <Check label="Transfer log" checked={transferLog} onChange={setTransferLog} />
@@ -187,8 +181,8 @@ export function FtpPage() {
           </div>
           {tls && (
             <>
-              <Field label="TLS certificate" className="sm:col-span-2"><input className={inputClass} value={tlsCert} onChange={(e) => setTlsCert(e.target.value)} placeholder="/etc/ssl/certs/ftp.pem" /></Field>
-              <Field label="TLS key" className="sm:col-span-2"><input className={inputClass} value={tlsKey} onChange={(e) => setTlsKey(e.target.value)} placeholder="/etc/ssl/private/ftp.key" /></Field>
+              <Field label="TLS certificate" className="sm:col-span-2"><TextInput value={tlsCert} onChange={(e) => setTlsCert(e.target.value)} placeholder="/etc/ssl/certs/ftp.pem" /></Field>
+              <Field label="TLS key" className="sm:col-span-2"><TextInput value={tlsKey} onChange={(e) => setTlsKey(e.target.value)} placeholder="/etc/ssl/private/ftp.key" /></Field>
             </>
           )}
           <div className="sm:col-span-2 xl:col-span-4">
@@ -197,25 +191,44 @@ export function FtpPage() {
         </form>
       </Card>
 
-      <Card title="Users" action={<Badge value={String(status?.users.length ?? 0)} />}>
-        <form
-          className="mb-3 grid items-end gap-2 sm:grid-cols-[1fr_1.4fr_1fr_auto]"
-          onSubmit={(event) => {
-            event.preventDefault();
-            run("/api/ftp/users", "POST", { name, home, password }).then((ok) => {
-              if (ok) setPassword("");
-            });
-          }}
-        >
-          <Field label="Username"><input className={inputClass} value={name} onChange={(e) => setName(e.target.value)} /></Field>
-          <HomeField value={home} paths={homes} onChange={setHome} />
-          <Field label="Password"><input className={inputClass} type="password" value={password} onChange={(e) => setPassword(e.target.value)} /></Field>
-          <Button type="submit" icon kind="primary" label="Add" disabled={busy}><UserPlus size={16} /></Button>
-        </form>
+      <Card
+        loading={busy || !ready}
+        title="Users"
+        action={
+          <span className="flex items-center gap-2">
+            <Badge value={String(status?.users.length ?? 0)} />
+            <Button icon kind="primary" label="Add" disabled={busy} onClick={() => setUserOpen(true)}><UserPlus size={16} /></Button>
+          </span>
+        }
+      >
         <ul className="space-y-2">
           {(status?.users ?? []).map((user) => (
             <li key={user.name} className="rounded-lg border border-[var(--border)] px-3 py-2">
-              <div className="flex flex-wrap items-center justify-between gap-2">
+              <RowActions
+                actions={[
+                  { label: "Password", icon: <KeyRound size={16} />, disabled: busy, onSelect: () => { setEditing(user.name); setNextPassword(""); } },
+                  {
+                    label: user.locked ? "Unlock" : "Lock",
+                    icon: user.locked ? <LockOpen size={16} /> : <Lock size={16} />,
+                    danger: !user.locked,
+                    disabled: busy,
+                    onSelect: async () => {
+                      if (!user.locked && !(await confirm(`Lock ${user.name}?`))) return;
+                      run("/api/ftp/users/lock", "POST", { name: user.name, lock: !user.locked, confirm: !user.locked });
+                    },
+                  },
+                  { label: user.write ? "Read only" : "Uploads", icon: <Upload size={16} />, disabled: busy, onSelect: () => run("/api/ftp/users/write", "POST", { name: user.name, write: !user.write }) },
+                  {
+                    label: "Delete",
+                    icon: <Trash2 size={16} />,
+                    danger: true,
+                    disabled: busy,
+                    onSelect: async () => {
+                      if (await confirm(`Delete ${user.name}?`)) run("/api/ftp/users", "DELETE", { name: user.name, confirm: true });
+                    },
+                  },
+                ]}
+              >
                 <span className="min-w-0">
                   <span className="flex items-center gap-2 font-medium">
                     <span className="truncate">{user.name}</span>
@@ -223,41 +236,47 @@ export function FtpPage() {
                   </span>
                   <span className="block truncate text-xs text-[var(--muted)]">{user.home || "—"}</span>
                 </span>
-                <span className="flex flex-wrap items-center gap-2">
-                  <Button icon label="Password" disabled={busy} expanded={editing === user.name} onClick={() => { setEditing(editing === user.name ? null : user.name); setNextPassword(""); }}><KeyRound size={16} /></Button>
-                  <Button icon kind={user.locked ? "primary" : "danger"} label={user.locked ? "Unlock" : "Lock"} disabled={busy} onClick={async () => {
-                    if (!user.locked && !(await confirm(`Lock ${user.name}?`))) return;
-                    run("/api/ftp/users/lock", "POST", { name: user.name, lock: !user.locked, confirm: !user.locked });
-                  }}>{user.locked ? <LockOpen size={16} /> : <Lock size={16} />}</Button>
-                  <Button icon label={user.write ? "Read only" : "Uploads"} disabled={busy} onClick={() => run("/api/ftp/users/write", "POST", { name: user.name, write: !user.write })}><Upload size={16} /></Button>
-                  <Button icon kind="danger" label="Delete" disabled={busy} onClick={async () => {
-                    if (await confirm(`Delete ${user.name}?`)) run("/api/ftp/users", "DELETE", { name: user.name, confirm: true });
-                  }}><Trash2 size={16} /></Button>
-                </span>
-              </div>
-              {editing === user.name && (
-                <form
-                  className="mt-2 flex items-end gap-2"
-                  onSubmit={(event) => {
-                    event.preventDefault();
-                    run("/api/ftp/users/password", "PUT", { name: user.name, password: nextPassword }).then((ok) => {
-                      if (ok) {
-                        setEditing(null);
-                        setNextPassword("");
-                      }
-                    });
-                  }}
-                >
-                  <Field label="New password" className="flex-1"><input className={inputClass} type="password" value={nextPassword} onChange={(e) => setNextPassword(e.target.value)} /></Field>
-                  <Button type="submit" icon kind="primary" label="Save" disabled={busy}><Save size={16} /></Button>
-                </form>
-              )}
+              </RowActions>
             </li>
           ))}
         </ul>
+        <Modal open={userOpen} title="Add FTP user" onOpenChange={setUserOpen}>
+          <form
+            className="grid gap-3"
+            onSubmit={(event) => {
+              event.preventDefault();
+              run("/api/ftp/users", "POST", { name, home, password }).then((ok) => {
+                if (!ok) return;
+                setPassword("");
+                setUserOpen(false);
+              });
+            }}
+          >
+            <Field label="Username"><TextInput value={name} onChange={(e) => setName(e.target.value)} /></Field>
+            <HomeField value={home} paths={homes} onChange={setHome} />
+            <Field label="Password"><TextInput type="password" value={password} onChange={(e) => setPassword(e.target.value)} /></Field>
+            <div className="flex justify-end"><Button type="submit" icon kind="primary" label="Add" disabled={busy}><UserPlus size={16} /></Button></div>
+          </form>
+        </Modal>
+        <Modal open={editing !== null} title={editing ? `Password for ${editing}` : "Password"} onOpenChange={(open) => { if (!open) setEditing(null); }}>
+          <form
+            className="grid gap-3"
+            onSubmit={(event) => {
+              event.preventDefault();
+              run("/api/ftp/users/password", "PUT", { name: editing, password: nextPassword }).then((ok) => {
+                if (!ok) return;
+                setEditing(null);
+                setNextPassword("");
+              });
+            }}
+          >
+            <Field label="New password"><TextInput type="password" value={nextPassword} onChange={(e) => setNextPassword(e.target.value)} /></Field>
+            <div className="flex justify-end"><Button type="submit" icon kind="primary" label="Save" disabled={busy}><Save size={16} /></Button></div>
+          </form>
+        </Modal>
       </Card>
 
-      <Card
+      <Card loading={busy || !ready}
         title="Sessions"
         action={
           <span className="flex items-center gap-2">
@@ -300,8 +319,7 @@ function HomeField({ value, paths, onChange }: { value: string; paths: string[];
 
   return (
     <Field label="Home" className="relative">
-      <input
-        className={inputClass}
+      <TextInput
         role="combobox"
         aria-expanded={shown}
         aria-autocomplete="list"
@@ -364,11 +382,11 @@ function Check({ label, checked, onChange }: { label: string; checked: boolean; 
   );
 }
 
-function Fact({ label, value }: { label: string; value: string }) {
+function Fact({ label, value, pending }: { label: string; value: string; pending?: boolean }) {
   return (
-    <div className="rounded-lg border border-[var(--border)] bg-[var(--bg)] px-3 py-2" title={value}>
+    <div className="rounded-lg border border-[var(--border)] bg-[var(--bg)] px-3 py-2" title={pending ? undefined : value}>
       <div className="text-xs text-[var(--muted)]">{label}</div>
-      <div className="truncate text-sm">{value || "—"}</div>
+      {pending ? <Placeholder className="mt-1 h-4 w-16" /> : <div className="truncate text-sm">{value || "—"}</div>}
     </div>
   );
 }

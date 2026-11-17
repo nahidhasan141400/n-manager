@@ -33,6 +33,15 @@ func TestLoadAndUpdate(t *testing.T) {
 	if again.Data.Monitoring.RefreshInterval != 10 {
 		t.Fatalf("interval = %d", again.Data.Monitoring.RefreshInterval)
 	}
+	if again.Data.Web.Server != "nginx" {
+		t.Fatalf("web server = %q", again.Data.Web.Server)
+	}
+	if err := f.SetWebServer("apache"); err != nil {
+		t.Fatal(err)
+	}
+	if f.Snapshot().Web.Server != "apache" {
+		t.Fatal(f.Snapshot().Web.Server)
+	}
 	if _, err := f.SetBind("0.0.0.0", 8080, "", ""); err == nil {
 		t.Fatal("expected remote bind without tls to fail")
 	}

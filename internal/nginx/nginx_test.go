@@ -1,6 +1,7 @@
 package nginx
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
@@ -44,7 +45,7 @@ func TestRenderAndRollback(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(layout.Available, "app.conf"), []byte(original), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	err = Apply(layout, "app", body, true, func() (string, error) {
+	err = Apply(context.Background(), layout, "app", body, true, func() (string, error) {
 		return "fail", os.ErrInvalid
 	})
 	if err == nil {
@@ -60,10 +61,10 @@ func TestRenderAndRollback(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(layout.Enabled, "app.conf")); !os.IsNotExist(err) {
 		t.Fatal("symlink should have been rolled back")
 	}
-	if err := Apply(layout, "app", body, true, func() (string, error) { return "ok", nil }); err != nil {
+	if err := Apply(context.Background(), layout, "app", body, true, func() (string, error) { return "ok", nil }); err != nil {
 		t.Fatal(err)
 	}
-	sites, err := List(layout)
+	sites, err := List(context.Background(), layout)
 	if err != nil || len(sites) != 1 || !sites[0].Enabled {
 		t.Fatalf("%v %+v", err, sites)
 	}

@@ -34,6 +34,9 @@ type Config struct {
 	Monitoring struct {
 		RefreshInterval int `yaml:"refresh_interval"`
 	} `yaml:"monitoring"`
+	Web struct {
+		Server string `yaml:"server"`
+	} `yaml:"web"`
 	Privileged struct {
 		Command string `yaml:"command"`
 	} `yaml:"privileged"`
@@ -118,6 +121,13 @@ func (c *Config) normalize() error {
 	if c.Monitoring.RefreshInterval < 1 || c.Monitoring.RefreshInterval > 300 {
 		return fmt.Errorf("monitoring.refresh_interval must be between 1 and 300 seconds")
 	}
+	switch c.Web.Server {
+	case "", "nginx":
+		c.Web.Server = "nginx"
+	case "apache":
+	default:
+		return fmt.Errorf("web.server must be nginx or apache")
+	}
 	if err := validateBind(c.Server.Host, c.Server.TLSCert, c.Server.TLSKey); err != nil {
 		return err
 	}
@@ -169,6 +179,18 @@ func (f *File) SetRefreshInterval(seconds int) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.Data.Monitoring.RefreshInterval = seconds
+	return f.saveLocked()
+}
+
+func (f *File) SetWebServer(server string) error {
+	switch server {
+	case "nginx", "apache":
+	default:
+		return fmt.Errorf("web server must be nginx or apache")
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.Data.Web.Server = server
 	return f.saveLocked()
 }
 

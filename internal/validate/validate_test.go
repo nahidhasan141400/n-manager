@@ -18,6 +18,9 @@ func TestOperationAllowlist(t *testing.T) {
 	if err := Operation("node-install", []string{"lts/*"}); err != nil {
 		t.Fatal(err)
 	}
+	if err := Operation("node-uninstall", []string{"v26.13.1"}); err != nil {
+		t.Fatal(err)
+	}
 	if err := Operation("node-install", []string{"$(id)"}); err == nil {
 		t.Fatal("expected version rejection")
 	}

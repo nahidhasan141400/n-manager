@@ -14,8 +14,11 @@ import (
 	"n-manager/internal/audit"
 	"n-manager/internal/auth"
 	"n-manager/internal/config"
+	"n-manager/internal/debuglog"
 	"n-manager/internal/monitor"
 	"n-manager/internal/priv"
+	"n-manager/internal/remote"
+	"n-manager/internal/servers"
 	"n-manager/internal/webui"
 )
 
@@ -28,19 +31,30 @@ type Server struct {
 	db      *sql.DB
 	auth    *auth.Manager
 	audit   *audit.Logger
+	trace   *debuglog.Log
 	monitor *monitor.Collector
 	exec    priv.Executor
+	servers *servers.Store
+	pool    *servers.Pool
+	series  *monitor.Series
 }
 
 func New(cfg *config.File, database *sql.DB, collector *monitor.Collector, exec priv.Executor) *Server {
 	snap := cfg.Snapshot()
+	pool := servers.NewPool()
+	trace := debuglog.New(database)
+	pool.SetTracer(trace)
 	return &Server{
 		cfg:     cfg,
 		db:      database,
 		auth:    auth.New(database, snap.Security.SessionSecret, snap.SessionTTL()),
 		audit:   audit.New(database),
+		trace:   trace,
 		monitor: collector,
 		exec:    exec,
+		servers: servers.New(database, snap.Security.SessionSecret),
+		pool:    pool,
+		series:  &monitor.Series{},
 	}
 }
 
@@ -50,6 +64,12 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/logout", s.logout)
 	mux.HandleFunc("GET /api/me", s.me)
 	mux.HandleFunc("GET /api/csrf", s.csrfToken)
+	mux.HandleFunc("GET /api/servers", s.listServers)
+	mux.HandleFunc("POST /api/servers", s.createServer)
+	mux.HandleFunc("PUT /api/servers/{id}", s.updateServer)
+	mux.HandleFunc("DELETE /api/servers/{id}", s.deleteServer)
+	mux.HandleFunc("POST /api/servers/{id}/test", s.testServer)
+	mux.HandleFunc("POST /api/servers/{id}/trust", s.trustServer)
 	mux.HandleFunc("GET /api/system/info", s.systemInfo)
 	mux.HandleFunc("GET /api/system/metrics", s.systemMetrics)
 	mux.HandleFunc("GET /api/apps/mysql", s.mysqlStatus)
@@ -60,13 +80,13 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/apps/mysql/settings", s.mysqlSettings)
 	mux.HandleFunc("POST /api/apps/mysql/databases", s.mysqlCreateDatabase)
 	mux.HandleFunc("DELETE /api/apps/mysql/databases", s.mysqlDropDatabase)
+	mux.HandleFunc("GET /api/apps/mysql/databases/export", s.mysqlExportDatabase)
+	mux.HandleFunc("POST /api/apps/mysql/databases/import", s.mysqlImportDatabase)
 	mux.HandleFunc("POST /api/apps/mysql/users", s.mysqlCreateUser)
 	mux.HandleFunc("DELETE /api/apps/mysql/users", s.mysqlDropUser)
 	mux.HandleFunc("PUT /api/apps/mysql/users/password", s.mysqlUserPassword)
 	mux.HandleFunc("POST /api/apps/mysql/grants", s.mysqlGrant)
 	mux.HandleFunc("DELETE /api/apps/mysql/grants", s.mysqlRevoke)
-	mux.HandleFunc("POST /api/apps/mysql/phpmyadmin/install", s.mysqlPHPMyAdminInstall)
-	mux.HandleFunc("POST /api/apps/mysql/phpmyadmin", s.mysqlPHPMyAdmin)
 	mux.HandleFunc("GET /api/apps/postgres", s.postgresStatus)
 	mux.HandleFunc("POST /api/apps/postgres/install", s.postgresInstall)
 	mux.HandleFunc("POST /api/apps/postgres/service", s.postgresService)
@@ -82,6 +102,13 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/apps/pm2/install", s.pm2Install)
 	mux.HandleFunc("POST /api/apps/pm2/action", s.pm2Action)
 	mux.HandleFunc("GET /api/apps/pm2/logs", s.pm2Logs)
+	mux.HandleFunc("GET /api/apps/git", s.gitStatus)
+	mux.HandleFunc("POST /api/apps/git/install", s.gitInstall)
+	mux.HandleFunc("POST /api/apps/git/config", s.gitConfig)
+	mux.HandleFunc("POST /api/apps/git/clone", s.gitClone)
+	mux.HandleFunc("POST /api/apps/git/pull", s.gitPull)
+	mux.HandleFunc("POST /api/apps/git/github", s.gitGitHub)
+	mux.HandleFunc("POST /api/apps/git/github/test", s.gitGitHubTest)
 	mux.HandleFunc("GET /api/ftp", s.ftpStatus)
 	mux.HandleFunc("POST /api/ftp/install", s.ftpInstall)
 	mux.HandleFunc("PUT /api/ftp", s.ftpSave)
@@ -94,6 +121,17 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("PUT /api/ftp/users/password", s.ftpUserPassword)
 	mux.HandleFunc("POST /api/ftp/users/lock", s.ftpUserLock)
 	mux.HandleFunc("POST /api/ftp/users/write", s.ftpUserWrite)
+	mux.HandleFunc("GET /api/services", s.services)
+	mux.HandleFunc("GET /api/services/logs", s.serviceLogs)
+	mux.HandleFunc("POST /api/services/action", s.serviceAction)
+	mux.HandleFunc("GET /api/firewall", s.firewallStatus)
+	mux.HandleFunc("POST /api/firewall/install", s.firewallInstall)
+	mux.HandleFunc("POST /api/firewall/enable", s.firewallEnable)
+	mux.HandleFunc("POST /api/firewall/disable", s.firewallDisable)
+	mux.HandleFunc("POST /api/firewall/rules", s.firewallAllow)
+	mux.HandleFunc("PUT /api/firewall/rules", s.firewallUpdate)
+	mux.HandleFunc("POST /api/firewall/config", s.firewallConfig)
+	mux.HandleFunc("DELETE /api/firewall/rules", s.firewallDelete)
 	mux.HandleFunc("GET /api/nginx", s.nginxStatus)
 	mux.HandleFunc("POST /api/nginx/install", s.nginxInstall)
 	mux.HandleFunc("POST /api/nginx/service", s.nginxService)
@@ -116,8 +154,10 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/settings/password", s.changePassword)
 	mux.HandleFunc("GET /api/settings/database", s.databaseSettings)
 	mux.HandleFunc("GET /api/audit", s.auditLog)
+	mux.HandleFunc("GET /api/logs", s.debugLogs)
+	mux.HandleFunc("DELETE /api/logs", s.clearDebugLogs)
 	mux.Handle("/", s.spa())
-	return s.headers(s.authenticate(s.checkCSRF(mux)))
+	return s.headers(s.logErrors(s.authenticate(s.checkCSRF(mux))))
 }
 
 func (s *Server) headers(next http.Handler) http.Handler {
@@ -206,7 +246,19 @@ func (s *Server) record(r *http.Request, action, target, detail string) {
 }
 
 func (s *Server) opCtx(r *http.Request) (context.Context, context.CancelFunc) {
-	return context.WithTimeout(r.Context(), 10*time.Minute)
+	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Minute)
+	if s.dry() {
+		return ctx, cancel
+	}
+	id := strings.TrimSpace(r.Header.Get("X-Server-Id"))
+	if id == "" {
+		return remote.With(ctx, remote.Missing{}), cancel
+	}
+	sys, err := s.pool.Open(ctx, s.servers, id)
+	if err != nil {
+		return remote.With(ctx, remote.Failure{Err: err}), cancel
+	}
+	return remote.With(ctx, sys), cancel
 }
 
 func (s *Server) dry() bool {

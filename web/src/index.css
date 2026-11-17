@@ -1,4 +1,5 @@
 @import "tailwindcss";
+@import "@radix-ui/themes/styles.css";
 
 :root,
 [data-theme="dark"] {
@@ -19,7 +20,11 @@
   --danger: #f85149;
   --input: #0d1117;
   --hover: #1c2128;
+  --skeleton: #30363d;
   --shadow: 0 8px 24px rgba(1, 4, 9, 0.4);
+  --scroll-track: transparent;
+  --scroll-thumb: #3d444d;
+  --scroll-thumb-hover: #6e7681;
 }
 
 [data-theme="light"] {
@@ -40,7 +45,11 @@
   --danger: #d1242f;
   --input: #ffffff;
   --hover: #f3f4f6;
+  --skeleton: #d8dee4;
   --shadow: 0 8px 24px rgba(140, 149, 159, 0.2);
+  --scroll-track: transparent;
+  --scroll-thumb: #c0c7d0;
+  --scroll-thumb-hover: #8c959f;
 }
 
 .nav-shell {
@@ -53,7 +62,58 @@
 
 * { box-sizing: border-box; }
 
-html, body, #root { height: 100%; }
+html, body, #root { height: 100%; overflow: hidden; }
+
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--scroll-thumb) var(--scroll-track);
+}
+
+*::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+*::-webkit-scrollbar-track {
+  background: var(--scroll-track);
+}
+
+*::-webkit-scrollbar-thumb {
+  background: var(--scroll-thumb);
+  border: 2px solid transparent;
+  border-radius: 999px;
+  background-clip: padding-box;
+}
+
+*::-webkit-scrollbar-thumb:hover {
+  background: var(--scroll-thumb-hover);
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+
+*::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+.nav-shell,
+.nav-shell * {
+  scrollbar-color: rgb(255 255 255 / 0.28) transparent;
+}
+
+.nav-shell::-webkit-scrollbar-thumb,
+.nav-shell *::-webkit-scrollbar-thumb {
+  background: rgb(255 255 255 / 0.28);
+  border: 2px solid transparent;
+  border-radius: 999px;
+  background-clip: padding-box;
+}
+
+.nav-shell::-webkit-scrollbar-thumb:hover,
+.nav-shell *::-webkit-scrollbar-thumb:hover {
+  background: rgb(255 255 255 / 0.42);
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
 
 body {
   margin: 0;
@@ -74,7 +134,54 @@ a { color: var(--link); }
   color: #fff;
 }
 
+button.icon-button {
+  width: var(--space-6);
+  height: var(--space-6);
+  padding-inline: 0;
+}
+
+.rt-TextFieldRoot,
+.rt-SelectTrigger,
+.rt-TextAreaRoot {
+  width: 100%;
+}
+
+.rt-BaseDialogContent {
+  overflow: visible;
+}
+
+.nav-shell .rt-SelectTrigger {
+  color: #fff;
+  background: rgb(255 255 255 / 0.12);
+  box-shadow: inset 0 0 0 1px rgb(255 255 255 / 0.28);
+}
+
 button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible {
   outline: 2px solid var(--link);
   outline-offset: 2px;
+}
+
+@property --frame-angle {
+  syntax: "<angle>";
+  initial-value: 0deg;
+  inherits: false;
+}
+
+@keyframes frame-turn {
+  to { --frame-angle: 360deg; }
+}
+
+.gradient-frame {
+  border: 2px solid transparent;
+  background:
+    linear-gradient(var(--card), var(--card)) padding-box,
+    conic-gradient(from var(--frame-angle), var(--accent), #7ee787, var(--link), var(--accent-hover), var(--accent)) border-box;
+  animation: frame-turn 1.2s linear infinite;
+  box-shadow: var(--shadow);
+}
+
+.skeleton {
+  display: block;
+  border-radius: 0.375rem;
+  background: var(--skeleton);
 }

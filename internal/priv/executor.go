@@ -2,9 +2,9 @@ package priv
 
 import (
 	"context"
-	"fmt"
 	"strings"
 
+	"n-manager/internal/remote"
 	"n-manager/internal/validate"
 )
 
@@ -60,6 +60,8 @@ func validateStdin(op, stdin string) error {
 		return err
 	case "ftp-user-add", "ftp-user-password", "mysql-user-create", "mysql-user-password":
 		return validate.FTPPassword(stdin)
+	case "mysql-db-import":
+		return validate.MySQLDump(stdin)
 	case "nginx-cert-put":
 		return validate.NginxCertPayload(stdin)
 	default:
@@ -68,15 +70,5 @@ func validateStdin(op, stdin string) error {
 }
 
 func run(ctx context.Context, name string, args []string, stdin string) (string, error) {
-	cmd := command(ctx, name, args...)
-	cmd.Stdin = strings.NewReader(stdin)
-	out, err := cmd.CombinedOutput()
-	text := strings.TrimSpace(string(out))
-	if err != nil {
-		if text == "" {
-			return "", err
-		}
-		return text, fmt.Errorf("%s", text)
-	}
-	return text, nil
+	return remote.Run(ctx, name, args, stdin)
 }

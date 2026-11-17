@@ -66,21 +66,20 @@ func TestGrantSQL(t *testing.T) {
 	}
 }
 
-func TestPHPMyAdminConfigStaysLocal(t *testing.T) {
-	config, err := PHPMyAdminConfig("/run/php/php8.3-fpm.sock")
-	if err != nil {
+func TestMySQLDumpLimits(t *testing.T) {
+	if err := validate.MySQLDump("CREATE TABLE widgets (id INT);"); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(config, "listen 127.0.0.1:8088;") {
-		t.Fatalf("config = %s", config)
+	if err := validate.MySQLDump(""); err == nil {
+		t.Fatal("expected an empty dump to be rejected")
 	}
-	if !strings.Contains(config, "root /usr/share/phpmyadmin;") {
-		t.Fatalf("config = %s", config)
+	if err := validate.MySQLDump("select 1;\x00"); err == nil {
+		t.Fatal("expected a binary dump to be rejected")
 	}
-	if err := validate.NginxContent(config); err != nil {
+	if err := validate.Operation("mysql-db-export", []string{"mysql"}); err == nil {
+		t.Fatal("expected a system database export to be rejected")
+	}
+	if err := validate.Operation("mysql-db-import", []string{"app_db"}); err != nil {
 		t.Fatal(err)
-	}
-	if _, err := PHPMyAdminConfig("/tmp/php.sock"); err == nil {
-		t.Fatal("expected socket outside /run/php to be rejected")
 	}
 }

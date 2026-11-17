@@ -2,7 +2,7 @@ import { FormEvent, useState } from "react";
 import { LoaderCircle, LogIn } from "lucide-react";
 import { api, setCsrf } from "../api";
 import logo from "../assets/logo.png";
-import { Button, Field, inputClass } from "../components/ui";
+import { Button, Field, TextInput } from "../components/ui";
 
 export function Login({ onSuccess }: { onSuccess: () => void }) {
   const [password, setPassword] = useState("");
@@ -29,13 +29,12 @@ export function Login({ onSuccess }: { onSuccess: () => void }) {
 
   return (
     <div className="flex min-h-screen items-center justify-center bg-[var(--bg)] p-4">
-      <form onSubmit={submit} className="w-full max-w-xs rounded-md border border-[var(--border)] bg-[var(--card)] p-5">
+      <form onSubmit={submit} className={`w-full max-w-xs rounded-2xl p-5 ${busy ? "gradient-frame" : "rounded-md border border-[var(--border)] bg-[var(--card)]"}`}>
         <div className="mb-4 rounded-lg bg-[#10261c] px-3 py-2">
           <img src={logo} alt="N Manager" className="h-9 w-auto max-w-full" />
         </div>
         <Field label="Password">
-          <input
-            className={inputClass}
+          <TextInput
             type="password"
             autoFocus
             value={password}

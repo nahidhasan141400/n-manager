@@ -1,15 +1,42 @@
-import { NavLink, Outlet } from "react-router-dom";
-import { useEffect, useRef, useState } from "react";
-import { Beaker, CircleUser, FolderInput, Globe, LayoutDashboard, LogOut, Moon, Server, Settings, Sun } from "lucide-react";
-import { api } from "../api";
+import { NavLink, Outlet, useLocation } from "react-router-dom";
+import { useEffect, useState } from "react";
+import { Beaker, Cog, Copy, FolderInput, Globe, LayoutDashboard, Moon, ScrollText, Server, Settings, Shield, Sun } from "lucide-react";
+import { api, serverId, setServer } from "../api";
 import logo from "../assets/logo.png";
-import { Button } from "./ui";
+import { AccountMenu, Button, Card, SelectBox, useToast } from "./ui";
+
+type ManagedServer = { id: string; name: string; host: string; trusted: boolean };
+
+async function copyHost(host: string, toast: (kind: "ok" | "err", text: string) => void) {
+  try {
+    await Promise.race([
+      navigator.clipboard.writeText(host),
+      new Promise<never>((_, reject) => window.setTimeout(() => reject(new Error("timeout")), 700)),
+    ]);
+    toast("ok", `Copied ${host}`);
+    return;
+  } catch {
+    const field = document.createElement("textarea");
+    field.value = host;
+    field.setAttribute("readonly", "");
+    field.style.position = "fixed";
+    field.style.left = "-9999px";
+    document.body.appendChild(field);
+    field.select();
+    const copied = document.execCommand("copy");
+    field.remove();
+    toast(copied ? "ok" : "err", copied ? `Copied ${host}` : "Could not copy the IP");
+  }
+}
 
 const links = [
   { to: "/", label: "Dashboard", icon: LayoutDashboard },
   { to: "/applications", label: "Apps", icon: Server },
   { to: "/nginx", label: "Nginx", icon: Globe },
+  { to: "/services", label: "Services", icon: Cog },
+  { to: "/firewall", label: "Firewall", icon: Shield },
   { to: "/ftp", label: "FTP", icon: FolderInput },
+  { to: "/logs", label: "Logs", icon: ScrollText },
   { to: "/settings", label: "Settings", icon: Settings },
 ];
 
@@ -24,33 +51,48 @@ export function Layout({
   onLogout: () => void;
   dryRun: boolean;
 }) {
-  const [online, setOnline] = useState(true);
-  const [menu, setMenu] = useState(false);
-  const menuRef = useRef<HTMLDivElement>(null);
-  const accountRef = useRef<HTMLButtonElement>(null);
+  const [online, setOnline] = useState(false);
+  const [servers, setServers] = useState<ManagedServer[]>([]);
+  const [current, setCurrent] = useState(serverId);
+  const location = useLocation();
+  const toast = useToast();
+  const host = servers.find((item) => item.id === current)?.host || "";
 
   useEffect(() => {
-    if (!menu) return;
-    function onPointer(event: MouseEvent) {
-      if (!menuRef.current?.contains(event.target as Node)) setMenu(false);
+    function refresh() {
+      setCurrent(serverId());
     }
-    function onKey(event: KeyboardEvent) {
-      if (event.key === "Escape") {
-        setMenu(false);
-        accountRef.current?.focus();
-      }
+    window.addEventListener("nmanager:server", refresh);
+    return () => window.removeEventListener("nmanager:server", refresh);
+  }, []);
+
+  useEffect(() => {
+    let stop = false;
+    function refresh() {
+      api<{ servers: ManagedServer[] }>("/api/servers")
+        .then((res) => {
+          if (stop) return;
+          const next = res.servers || [];
+          setServers(next);
+          if (serverId() && !next.some((item) => item.id === serverId())) setServer("");
+        })
+        .catch(() => undefined);
     }
-    document.addEventListener("mousedown", onPointer);
-    document.addEventListener("keydown", onKey);
+    refresh();
+    window.addEventListener("nmanager:servers", refresh);
     return () => {
-      document.removeEventListener("mousedown", onPointer);
-      document.removeEventListener("keydown", onKey);
+      stop = true;
+      window.removeEventListener("nmanager:servers", refresh);
     };
-  }, [menu]);
+  }, []);
 
   useEffect(() => {
     let stop = false;
     async function ping() {
+      if (!current) {
+        if (!stop) setOnline(false);
+        return;
+      }
       try {
         await api("/api/system/info");
         if (!stop) setOnline(true);
@@ -64,13 +106,26 @@ export function Layout({
       stop = true;
       window.clearInterval(timer);
     };
-  }, []);
+  }, [current]);
 
   return (
-    <div className="flex h-full min-h-screen">
-      <aside className="nav-shell flex w-64 shrink-0 flex-col">
+    <div className="flex h-dvh overflow-hidden">
+      <aside className="nav-shell flex h-full w-64 min-w-64 shrink-0 flex-col overflow-y-auto">
         <div className="px-4 pb-4 pt-5">
           <img src={logo} alt="N Manager" className="h-9 w-auto max-w-full" />
+        </div>
+        <div className="px-3 pb-3">
+          <label className="block text-xs text-white/80">
+            Server
+            <SelectBox
+              label="Server"
+              tone="sidebar"
+              value={current}
+              onValueChange={setServer}
+              placeholder="Select a server"
+              options={[{ value: "", label: "Select a server" }, ...servers.map((item) => ({ value: item.id, label: item.name }))]}
+            />
+          </label>
         </div>
         <nav className="flex flex-1 flex-col gap-1 px-3">
           {links.map((link) => {
@@ -98,8 +153,8 @@ export function Layout({
         </nav>
         <div className="m-3 rounded-xl bg-white/10 px-3 py-2.5 text-xs">
           <div className="flex items-center gap-2">
-            <span className={`h-2 w-2 rounded-full ${online ? "bg-[#3fb950]" : "bg-[var(--danger)]"}`} />
-            {online ? "Online" : "Offline"}
+            <span className={`h-2 w-2 rounded-full ${!current ? "bg-white/40" : online ? "bg-[#3fb950]" : "bg-[var(--danger)]"}`} />
+            {!current ? "No server" : online ? "Online" : "Offline"}
           </div>
           {dryRun && (
             <div className="mt-2 flex items-center gap-2 text-[var(--warning)]">
@@ -109,50 +164,29 @@ export function Layout({
           )}
         </div>
       </aside>
-      <div className="flex min-w-0 flex-1 flex-col">
-        <header className="relative z-20 flex h-12 items-center justify-end border-b border-[var(--border)] py-0 pl-4 pr-5">
-          <div className="flex items-center gap-2">
+      <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+        <header className="relative z-20 flex h-12 shrink-0 items-center gap-2 border-b border-[var(--border)] py-0 pl-4 pr-5">
+          {host && (
+            <Button icon label={host} title="Copy IP" onClick={() => void copyHost(host, toast)}>
+              <Copy size={16} />
+            </Button>
+          )}
+          <div className="ml-auto flex items-center gap-2">
             <Button iconOnly label={theme === "dark" ? "Light theme" : "Dark theme"} onClick={onTheme}>
               {theme === "dark" ? <Sun size={16} /> : <Moon size={16} />}
             </Button>
-            <div className="relative" ref={menuRef}>
-              <button
-                ref={accountRef}
-                type="button"
-                aria-label="Account"
-                aria-haspopup="menu"
-                aria-expanded={menu}
-                title="Account"
-                onClick={() => setMenu((open) => !open)}
-                className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-[var(--border)] bg-[var(--card)] text-[var(--text)] hover:bg-[var(--hover)] [&_svg]:block [&_svg]:size-4"
-              >
-                <CircleUser size={16} />
-              </button>
-              {menu && (
-                <div
-                  role="menu"
-                  aria-label="Account"
-                  className="absolute right-0 z-30 mt-1.5 w-44 max-w-[calc(100vw-1.5rem)] rounded-lg border border-[var(--border)] bg-[var(--card)] p-1 shadow-[var(--shadow)]"
-                >
-                  <button
-                    role="menuitem"
-                    type="button"
-                    className="flex h-9 w-full items-center gap-2 rounded-md px-2 text-left text-sm leading-none text-[var(--text)] hover:bg-[var(--hover)] [&_svg]:block [&_svg]:size-4 [&_svg]:shrink-0"
-                    onClick={() => {
-                      setMenu(false);
-                      onLogout();
-                    }}
-                  >
-                    <LogOut size={16} />
-                    Log out
-                  </button>
-                </div>
-              )}
-            </div>
+            <AccountMenu onLogout={onLogout} />
           </div>
         </header>
-        <main className="min-w-0 flex-1 overflow-auto p-4">
-          <Outlet />
+        <main className="min-h-0 min-w-0 flex-1 overflow-auto p-4">
+          {location.pathname !== "/settings" && location.pathname !== "/logs" && !current ? (
+            <Card title="Add a server">
+              <p className="text-sm text-[var(--muted)]">Choose a server from the sidebar after you add its SSH login in Settings.</p>
+              <NavLink to="/settings" className="mt-3 inline-flex text-sm">Open Settings</NavLink>
+            </Card>
+          ) : (
+            <Outlet key={current || "none"} />
+          )}
         </main>
       </div>
     </div>

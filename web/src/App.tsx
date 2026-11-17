@@ -1,13 +1,18 @@
+import { Theme } from "@radix-ui/themes";
 import { useEffect, useState } from "react";
 import { Navigate, Route, Routes, useNavigate } from "react-router-dom";
 import { api, setCsrf } from "./api";
+import logo from "./assets/logo.png";
 import { Layout } from "./components/Layout";
-import { Feedback } from "./components/ui";
+import { Card, Feedback, Placeholder } from "./components/ui";
 import { Applications } from "./pages/Applications";
 import { Dashboard } from "./pages/Dashboard";
 import { Login } from "./pages/Login";
+import { FirewallPage } from "./pages/Firewall";
 import { FtpPage } from "./pages/Ftp";
+import { LogsPage } from "./pages/Logs";
 import { NginxPage } from "./pages/Nginx";
+import { ServicesPage } from "./pages/Services";
 import { SettingsPage } from "./pages/Settings";
 import type { Settings } from "./types";
 
@@ -61,9 +66,22 @@ export function App() {
     navigate("/login");
   }
 
-  if (!ready) return <div className="p-6 text-sm text-[var(--muted)]">Loading N Manager…</div>;
-
-  return (
+  const shell = !ready ? (
+      <div className="flex h-dvh overflow-hidden bg-[var(--bg)]">
+        <aside className="nav-shell flex h-full w-64 min-w-64 shrink-0 flex-col px-3 py-5">
+          <img src={logo} alt="N Manager" className="mb-4 h-9 w-auto px-1" />
+          {["Dashboard", "Apps", "Nginx", "Services", "Firewall", "FTP", "Logs", "Settings"].map((label) => (
+            <div key={label} className="flex h-10 items-center px-2 text-sm text-white">{label}</div>
+          ))}
+        </aside>
+        <main className="min-w-0 flex-1 p-4">
+          <Card loading>
+            <Placeholder className="h-4 w-32" />
+            <Placeholder className="mt-3 h-4 w-48" />
+          </Card>
+        </main>
+      </div>
+  ) : (
     <Feedback>
       <Routes>
         <Route path="/login" element={authed ? <Navigate to="/" replace /> : <Login onSuccess={() => {
@@ -75,10 +93,20 @@ export function App() {
           <Route path="/" element={<Dashboard theme={theme} />} />
           <Route path="/applications" element={<Applications />} />
           <Route path="/nginx" element={<NginxPage />} />
+          <Route path="/web" element={<Navigate to="/nginx" replace />} />
+          <Route path="/services" element={<ServicesPage />} />
+          <Route path="/firewall" element={<FirewallPage />} />
           <Route path="/ftp" element={<FtpPage />} />
+          <Route path="/logs" element={<LogsPage />} />
           <Route path="/settings" element={<SettingsPage onInterval={() => undefined} />} />
         </Route>
       </Routes>
     </Feedback>
+  );
+
+  return (
+    <Theme appearance={theme} accentColor="green" grayColor="slate" radius="medium" panelBackground="solid">
+      {shell}
+    </Theme>
   );
 }

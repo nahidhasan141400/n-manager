@@ -48,10 +48,10 @@ type Info struct {
 
 func ParseCPUStat(text string) (CPUStat, error) {
 	for _, line := range strings.Split(text, "\n") {
-		if !strings.HasPrefix(line, "cpu ") {
+		fields := strings.Fields(line)
+		if len(fields) == 0 || fields[0] != "cpu" {
 			continue
 		}
-		fields := strings.Fields(line)
 		if len(fields) < 5 {
 			return CPUStat{}, fmt.Errorf("short cpu line")
 		}

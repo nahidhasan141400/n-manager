@@ -70,18 +70,10 @@ export type MySQLGrant = {
   system: boolean;
 };
 
-export type PHPMyAdminStatus = {
-  installed: boolean;
-  version: string;
-  enabled: boolean;
-  mode: string;
-};
-
 export type MySQLAdminView = {
   databases: MySQLDatabase[];
   users: MySQLUser[];
   grants: MySQLGrant[];
-  phpmyadmin: PHPMyAdminStatus;
   error?: string;
 };
 
@@ -118,6 +110,28 @@ export type PM2Process = {
   restarts: number;
   uptime: number;
   pid: number;
+};
+
+export type GitRepo = {
+  path: string;
+  remote: string;
+  branch: string;
+};
+
+export type GitHubLink = {
+  ready: boolean;
+  connected: boolean;
+  login: string;
+  public_key: string;
+};
+
+export type GitStatus = {
+  installed: boolean;
+  version: string;
+  name: string;
+  email: string;
+  repos: GitRepo[];
+  github: GitHubLink;
 };
 
 export type PM2Status = {
@@ -214,6 +228,16 @@ export type DatabaseStatus = {
   version: number;
   latest: number;
   ready: boolean;
+};
+
+export type DebugEntry = {
+  id: number;
+  created_at: number;
+  level: string;
+  server: string;
+  kind: string;
+  message: string;
+  detail: string;
 };
 
 export type AuditEntry = {

@@ -1,12 +1,15 @@
 package nginx
 
 import (
+	"context"
 	"crypto/x509"
 	"encoding/pem"
 	"os"
 	"path/filepath"
 	"strings"
 	"time"
+
+	"n-manager/internal/remote"
 )
 
 const CertDir = "/etc/nginx/n-manager/certs"
@@ -22,18 +25,18 @@ type Certificate struct {
 	Managed  bool   `json:"managed"`
 }
 
-func Certificates() []Certificate {
+func Certificates(ctx context.Context) []Certificate {
 	var out []Certificate
-	out = append(out, managedCerts()...)
-	out = append(out, letsEncrypt()...)
+	out = append(out, managedCerts(ctx)...)
+	out = append(out, letsEncrypt(ctx)...)
 	if out == nil {
 		return []Certificate{}
 	}
 	return out
 }
 
-func managedCerts() []Certificate {
-	entries, err := os.ReadDir(CertDir)
+func managedCerts(ctx context.Context) []Certificate {
+	entries, err := remote.ReadDir(ctx, CertDir)
 	if err != nil {
 		return nil
 	}
@@ -46,7 +49,7 @@ func managedCerts() []Certificate {
 		id := strings.TrimSuffix(name, ".crt")
 		certPath := filepath.Join(CertDir, name)
 		keyPath := filepath.Join(CertDir, id+".key")
-		item, ok := describe(id, certPath, keyPath, true)
+		item, ok := describe(ctx, id, certPath, keyPath, true)
 		if ok {
 			out = append(out, item)
 		}
@@ -54,9 +57,9 @@ func managedCerts() []Certificate {
 	return out
 }
 
-func letsEncrypt() []Certificate {
+func letsEncrypt(ctx context.Context) []Certificate {
 	const root = "/etc/letsencrypt/live"
-	entries, err := os.ReadDir(root)
+	entries, err := remote.ReadDir(ctx, root)
 	if err != nil {
 		return nil
 	}
@@ -66,7 +69,7 @@ func letsEncrypt() []Certificate {
 			continue
 		}
 		dir := filepath.Join(root, entry.Name())
-		item, ok := describe(entry.Name(), filepath.Join(dir, "fullchain.pem"), filepath.Join(dir, "privkey.pem"), false)
+		item, ok := describe(ctx, entry.Name(), filepath.Join(dir, "fullchain.pem"), filepath.Join(dir, "privkey.pem"), false)
 		if ok {
 			out = append(out, item)
 		}
@@ -74,12 +77,12 @@ func letsEncrypt() []Certificate {
 	return out
 }
 
-func describe(name, certPath, keyPath string, managed bool) (Certificate, bool) {
-	info, err := os.Lstat(certPath)
+func describe(ctx context.Context, name, certPath, keyPath string, managed bool) (Certificate, bool) {
+	info, err := remote.Stat(ctx, certPath)
 	if err != nil || info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
 		return Certificate{}, false
 	}
-	raw, err := os.ReadFile(certPath)
+	raw, err := remote.ReadFile(ctx, certPath)
 	if err != nil {
 		return Certificate{}, false
 	}

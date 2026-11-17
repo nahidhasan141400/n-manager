@@ -3,6 +3,7 @@ package api
 import (
 	"errors"
 	"net/http"
+	"strings"
 	"time"
 
 	"golang.org/x/crypto/bcrypt"
@@ -54,16 +55,32 @@ func (s *Server) csrfToken(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) systemInfo(w http.ResponseWriter, r *http.Request) {
-	info, err := s.monitor.Info()
+	ctx, cancel, ok := s.withMachine(w, r)
+	if !ok {
+		return
+	}
+	defer cancel()
+	info, err := s.series.Info(ctx, version.Version)
 	if err != nil {
-		writeErr(w, http.StatusInternalServerError, err.Error())
+		writeErr(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	writeJSON(w, http.StatusOK, info)
 }
 
 func (s *Server) systemMetrics(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, s.monitor.Snapshot())
+	ctx, cancel, ok := s.withMachine(w, r)
+	if !ok {
+		return
+	}
+	defer cancel()
+	id := strings.TrimSpace(r.Header.Get("X-Server-Id"))
+	snap, err := s.series.Snapshot(ctx, id)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, snap)
 }
 
 func (s *Server) getSettings(w http.ResponseWriter, r *http.Request) {
@@ -93,7 +110,7 @@ func (s *Server) putSettings(w http.ResponseWriter, r *http.Request) {
 		Port              *int    `json:"port"`
 		TLSCert           *string `json:"tls_cert"`
 		TLSKey            *string `json:"tls_key"`
-		SessionTTLMinutes *int    `json:"session_ttl_minutes"`
+		SessionTTLMinutes *int `json:"session_ttl_minutes"`
 	}
 	if err := decode(r, &body); err != nil {
 		writeErr(w, http.StatusBadRequest, "invalid request")

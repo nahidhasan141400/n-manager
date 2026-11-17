@@ -3,11 +3,8 @@ package ftp
 import (
 	"bufio"
 	"context"
-	"errors"
 	"fmt"
-	"io"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"sort"
 	"strconv"
@@ -15,6 +12,7 @@ import (
 	"time"
 
 	"n-manager/internal/pkgmgr"
+	"n-manager/internal/remote"
 	"n-manager/internal/validate"
 )
 
@@ -63,26 +61,26 @@ type Session struct {
 	Peer  string `json:"peer"`
 }
 
-func Read() Status {
+func Read(ctx context.Context) Status {
 	spec := validate.FTPDefaults()
-	if cfg, err := parseConf(ConfPath); err == nil {
+	if cfg, err := parseConf(ctx, ConfPath); err == nil {
 		spec = cfg
 	}
 	st := statusFrom(spec)
 	st.Users = []User{}
 	st.Sessions = []Session{}
 	st.Active, st.Enabled = "not-found", "unknown"
-	mgr, err := pkgmgr.Detect()
+	mgr, err := pkgmgr.Detect(ctx)
 	if err == nil {
-		installed, version, qerr := pkgmgr.Installed(mgr.ID, "vsftpd")
+		installed, version, qerr := pkgmgr.Installed(ctx, mgr.ID, "vsftpd")
 		if qerr == nil && installed {
 			st.Installed = true
 			st.Version = version
 		}
 	}
-	st.Active, st.Enabled, st.Exists = probeUnit("vsftpd")
-	st.Users = listUsers(UserList, "/etc/passwd", "/etc/shadow", spec.Write)
-	st.Sessions = Sessions(spec.Port)
+	st.Active, st.Enabled, st.Exists = probeUnit(ctx, "vsftpd")
+	st.Users = listUsers(ctx, UserList, "/etc/passwd", "/etc/shadow", spec.Write)
+	st.Sessions = ParseSessions(commandOut(ctx, "ss", "-Htn", "state", "established"), spec.Port)
 	return st
 }
 
@@ -144,8 +142,8 @@ func UserConfPath(name string) (string, error) {
 	return filepath.Join(UserConfDir, name), nil
 }
 
-func Homes() []string {
-	return ListHomes([]string{"/home", "/srv", "/var/www"}, 4, 300)
+func Homes(ctx context.Context) []string {
+	return ListHomes(ctx, []string{"/home", "/srv", "/var/www"}, 4, 300)
 }
 
 var skipHomeDirs = map[string]struct{}{
@@ -153,14 +151,14 @@ var skipHomeDirs = map[string]struct{}{
 	"__pycache__": {}, "target": {}, "cache": {}, "Cache": {},
 }
 
-func ListHomes(roots []string, maxDepth, maxCount int) []string {
+func ListHomes(ctx context.Context, roots []string, maxDepth, maxCount int) []string {
 	var paths []string
 	for _, root := range roots {
-		info, err := os.Lstat(root)
+		info, err := remote.Stat(ctx, root)
 		if err != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
 			continue
 		}
-		walkHomes(root, 1, maxDepth, maxCount, &paths)
+		walkHomes(ctx, root, 1, maxDepth, maxCount, &paths)
 	}
 	sort.Strings(paths)
 	if paths == nil {
@@ -169,11 +167,11 @@ func ListHomes(roots []string, maxDepth, maxCount int) []string {
 	return paths
 }
 
-func walkHomes(dir string, depth, maxDepth, maxCount int, paths *[]string) {
+func walkHomes(ctx context.Context, dir string, depth, maxDepth, maxCount int, paths *[]string) {
 	if depth > maxDepth || len(*paths) >= maxCount {
 		return
 	}
-	entries, err := os.ReadDir(dir)
+	entries, err := remote.ReadDir(ctx, dir)
 	if err != nil {
 		return
 	}
@@ -194,12 +192,12 @@ func walkHomes(dir string, depth, maxDepth, maxCount int, paths *[]string) {
 			return
 		}
 		path := filepath.Join(dir, name)
-		info, err := os.Lstat(path)
+		info, err := remote.Stat(ctx, path)
 		if err != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
 			continue
 		}
 		*paths = append(*paths, path)
-		walkHomes(path, depth+1, maxDepth, maxCount, paths)
+		walkHomes(ctx, path, depth+1, maxDepth, maxCount, paths)
 	}
 }
 
@@ -210,8 +208,8 @@ func yesNo(on bool) string {
 	return "NO"
 }
 
-func parseConf(path string) (validate.FTPApply, error) {
-	b, err := os.ReadFile(path)
+func parseConf(ctx context.Context, path string) (validate.FTPApply, error) {
+	b, err := remote.ReadFile(ctx, path)
 	if err != nil {
 		return validate.FTPApply{}, err
 	}
@@ -265,22 +263,21 @@ func parseConf(path string) (validate.FTPApply, error) {
 	return spec, nil
 }
 
-func listUsers(userlist, passwd, shadow string, globalWrite bool) []User {
-	f, err := os.Open(userlist)
+func listUsers(ctx context.Context, userlist, passwd, shadow string, globalWrite bool) []User {
+	b, err := remote.ReadFile(ctx, userlist)
 	if err != nil {
 		return []User{}
 	}
-	defer f.Close()
-	homes := passwdHomes(passwd)
-	locked := shadowLocked(shadow)
+	homes := passwdHomes(ctx, passwd)
+	locked := shadowLocked(ctx, shadow)
 	var users []User
-	sc := bufio.NewScanner(f)
+	sc := bufio.NewScanner(strings.NewReader(string(b)))
 	for sc.Scan() {
 		name := strings.TrimSpace(sc.Text())
 		if name == "" || strings.HasPrefix(name, "#") {
 			continue
 		}
-		users = append(users, User{Name: name, Home: homes[name], Locked: locked[name], Write: userWrite(name, globalWrite)})
+		users = append(users, User{Name: name, Home: homes[name], Locked: locked[name], Write: userWrite(ctx, name, globalWrite)})
 	}
 	if users == nil {
 		return []User{}
@@ -288,12 +285,12 @@ func listUsers(userlist, passwd, shadow string, globalWrite bool) []User {
 	return users
 }
 
-func userWrite(name string, fallback bool) bool {
+func userWrite(ctx context.Context, name string, fallback bool) bool {
 	path, err := UserConfPath(name)
 	if err != nil {
 		return fallback
 	}
-	b, err := os.ReadFile(path)
+	b, err := remote.ReadFile(ctx, path)
 	if err != nil {
 		return fallback
 	}
@@ -306,14 +303,13 @@ func userWrite(name string, fallback bool) bool {
 	return fallback
 }
 
-func shadowLocked(path string) map[string]*bool {
-	f, err := os.Open(path)
+func shadowLocked(ctx context.Context, path string) map[string]*bool {
+	b, err := remote.ReadFile(ctx, path)
 	if err != nil {
 		return nil
 	}
-	defer f.Close()
 	out := map[string]*bool{}
-	sc := bufio.NewScanner(f)
+	sc := bufio.NewScanner(strings.NewReader(string(b)))
 	for sc.Scan() {
 		fields := strings.Split(sc.Text(), ":")
 		if len(fields) < 2 || fields[0] == "" {
@@ -326,8 +322,8 @@ func shadowLocked(path string) map[string]*bool {
 	return out
 }
 
-func Sessions(port int) []Session {
-	return ParseSessions(commandOut("ss", "-Htn", "state", "established"), port)
+func Sessions(ctx context.Context, port int) []Session {
+	return ParseSessions(commandOut(ctx, "ss", "-Htn", "state", "established"), port)
 }
 
 func ParseSessions(text string, port int) []Session {
@@ -364,45 +360,20 @@ func portOf(addr string) (int, bool) {
 	return n, true
 }
 
-func Tail(path string, lines int) (string, error) {
+func Tail(ctx context.Context, path string, lines int) (string, error) {
 	if err := validate.ReadablePath(path); err != nil {
 		return "", err
 	}
-	f, err := os.Open(path)
-	if err != nil {
-		return "", err
-	}
-	defer f.Close()
-	st, err := f.Stat()
-	if err != nil {
-		return "", err
-	}
-	size := st.Size()
-	readSize := int64(256 * 1024)
-	if size < readSize {
-		readSize = size
-	}
-	buf := make([]byte, readSize)
-	if readSize > 0 {
-		if _, err := f.ReadAt(buf, size-readSize); err != nil && !errors.Is(err, io.EOF) {
-			return "", err
-		}
-	}
-	parts := strings.Split(strings.TrimRight(string(buf), "\n"), "\n")
-	if len(parts) > lines {
-		parts = parts[len(parts)-lines:]
-	}
-	return strings.Join(parts, "\n"), nil
+	return remote.ReadTail(ctx, path, lines)
 }
 
-func passwdHomes(path string) map[string]string {
+func passwdHomes(ctx context.Context, path string) map[string]string {
 	out := map[string]string{}
-	f, err := os.Open(path)
+	b, err := remote.ReadFile(ctx, path)
 	if err != nil {
 		return out
 	}
-	defer f.Close()
-	sc := bufio.NewScanner(f)
+	sc := bufio.NewScanner(strings.NewReader(string(b)))
 	for sc.Scan() {
 		fields := strings.Split(sc.Text(), ":")
 		if len(fields) >= 6 {
@@ -412,13 +383,13 @@ func passwdHomes(path string) map[string]string {
 	return out
 }
 
-func probeUnit(unit string) (active, enabled string, exists bool) {
-	load := strings.TrimSpace(commandOut("systemctl", "show", unit, "-p", "LoadState", "--value"))
+func probeUnit(ctx context.Context, unit string) (active, enabled string, exists bool) {
+	load := strings.TrimSpace(commandOut(ctx, "systemctl", "show", unit, "-p", "LoadState", "--value"))
 	if load == "" || load == "not-found" {
 		return "not-found", "unknown", false
 	}
-	active = strings.TrimSpace(commandOut("systemctl", "show", unit, "-p", "ActiveState", "--value"))
-	enabled = strings.TrimSpace(commandOut("systemctl", "is-enabled", unit))
+	active = strings.TrimSpace(commandOut(ctx, "systemctl", "show", unit, "-p", "ActiveState", "--value"))
+	enabled = strings.TrimSpace(commandOut(ctx, "systemctl", "is-enabled", unit))
 	if fields := strings.Fields(enabled); len(fields) > 0 {
 		enabled = fields[0]
 	}
@@ -428,18 +399,18 @@ func probeUnit(unit string) (active, enabled string, exists bool) {
 	return active, enabled, true
 }
 
-func commandOut(name string, args ...string) string {
-	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
+func commandOut(ctx context.Context, name string, args ...string) string {
+	ctx, cancel := context.WithTimeout(ctx, 8*time.Second)
 	defer cancel()
-	out, _ := exec.CommandContext(ctx, name, args...).CombinedOutput()
-	return string(out)
+	out, _ := remote.Run(ctx, name, args, "")
+	return out
 }
 
-func NologinShell() string {
-	if _, err := os.Stat("/usr/sbin/nologin"); err == nil {
+func NologinShell(ctx context.Context) string {
+	if _, err := remote.Stat(ctx, "/usr/sbin/nologin"); err == nil {
 		return "/usr/sbin/nologin"
 	}
-	if _, err := exec.LookPath("nologin"); err == nil {
+	if _, err := remote.Run(ctx, "sh", []string{"-c", "command -v nologin"}, ""); err == nil {
 		return "nologin"
 	}
 	return "/bin/false"

@@ -32,11 +32,13 @@ var allowedPackages = map[string]struct{}{
 	"mariadb-server": {},
 	"postgresql":     {},
 	"nginx":          {},
+	"apache2":        {},
+	"httpd":          {},
 	"certbot":        {},
 	"vsftpd":         {},
-	"phpmyadmin":     {},
 	"php-fpm":        {},
-	"phpMyAdmin":     {},
+	"ufw":            {},
+	"git":            {},
 }
 
 var allowedUnits = map[string]struct{}{
@@ -45,6 +47,8 @@ var allowedUnits = map[string]struct{}{
 	"mysqld":     {},
 	"postgresql": {},
 	"nginx":      {},
+	"apache2":    {},
+	"httpd":      {},
 	"vsftpd":     {},
 }
 
@@ -59,7 +63,7 @@ var allowedActions = map[string]struct{}{
 
 func Operation(op string, args []string) error {
 	switch op {
-	case "pkg-install":
+	case "pkg-install", "pkg-remove":
 		if len(args) != 2 || (args[0] != "apt" && args[0] != "dnf") || !AllowedPackage(args[1]) {
 			return fmt.Errorf("invalid package install request")
 		}
@@ -167,7 +171,7 @@ func Operation(op string, args []string) error {
 			return err
 		}
 	case "mysql-list":
-		if len(args) != 0 {
+		if len(args) > 1 || (len(args) == 1 && args[0] != "nginx" && args[0] != "apache") {
 			return fmt.Errorf("invalid mysql request")
 		}
 	case "mysql-settings":
@@ -177,7 +181,7 @@ func Operation(op string, args []string) error {
 		if _, _, err := MySQLSettings(args[0], args[1]); err != nil {
 			return err
 		}
-	case "mysql-db-create", "mysql-db-drop":
+	case "mysql-db-create", "mysql-db-drop", "mysql-db-export", "mysql-db-import":
 		if len(args) != 1 {
 			return fmt.Errorf("invalid mysql database request")
 		}
@@ -214,13 +218,111 @@ func Operation(op string, args []string) error {
 		if err := MySQLDatabase(args[2]); err != nil {
 			return err
 		}
-	case "phpmyadmin-install":
-		if len(args) != 1 || (args[0] != "apt" && args[0] != "dnf") {
-			return fmt.Errorf("invalid phpmyadmin install request")
-		}
-	case "phpmyadmin-enable", "phpmyadmin-disable":
+	case "firewall-status", "firewall-disable":
 		if len(args) != 0 {
-			return fmt.Errorf("invalid phpmyadmin request")
+			return fmt.Errorf("invalid firewall request")
+		}
+	case "firewall-enable":
+		if len(args) != 1 {
+			return fmt.Errorf("invalid firewall request")
+		}
+		if err := FirewallPort(args[0]); err != nil {
+			return err
+		}
+	case "firewall-allow":
+		if len(args) != 7 {
+			return fmt.Errorf("invalid firewall request")
+		}
+		port, err := strconv.Atoi(args[2])
+		if err != nil {
+			return fmt.Errorf("invalid firewall port")
+		}
+		sshPort, err := strconv.Atoi(args[6])
+		if err != nil {
+			return fmt.Errorf("invalid firewall port")
+		}
+		if err := FirewallAccess(args[0], args[1], port, args[3], args[4], args[5], sshPort); err != nil {
+			return err
+		}
+	case "firewall-config":
+		if len(args) != 5 {
+			return fmt.Errorf("invalid firewall request")
+		}
+		if err := FirewallPolicy("incoming", args[0]); err != nil {
+			return err
+		}
+		if err := FirewallPolicy("outgoing", args[1]); err != nil {
+			return err
+		}
+		if err := FirewallLogging(args[2]); err != nil {
+			return err
+		}
+		if args[3] != "yes" && args[3] != "no" {
+			return fmt.Errorf("invalid firewall request")
+		}
+		if err := FirewallPort(args[4]); err != nil {
+			return err
+		}
+	case "firewall-delete":
+		if len(args) != 2 {
+			return fmt.Errorf("invalid firewall request")
+		}
+		n, err := strconv.Atoi(args[0])
+		if err != nil || n < 1 || n > 500 {
+			return fmt.Errorf("invalid firewall rule")
+		}
+		if err := FirewallPort(args[1]); err != nil {
+			return err
+		}
+	case "firewall-update":
+		if len(args) != 8 {
+			return fmt.Errorf("invalid firewall request")
+		}
+		n, err := strconv.Atoi(args[0])
+		if err != nil || n < 1 || n > 500 {
+			return fmt.Errorf("invalid firewall rule")
+		}
+		port, err := strconv.Atoi(args[3])
+		if err != nil {
+			return fmt.Errorf("invalid firewall port")
+		}
+		sshPort, err := strconv.Atoi(args[7])
+		if err != nil {
+			return fmt.Errorf("invalid firewall port")
+		}
+		if err := FirewallAccess(args[1], args[2], port, args[4], args[5], args[6], sshPort); err != nil {
+			return err
+		}
+	case "git-config":
+		if len(args) != 2 {
+			return fmt.Errorf("invalid git identity")
+		}
+		if err := GitName(args[0]); err != nil {
+			return err
+		}
+		if err := Email(args[1]); err != nil {
+			return err
+		}
+	case "git-clone":
+		if len(args) != 2 {
+			return fmt.Errorf("invalid git clone request")
+		}
+		if err := GitURL(args[0]); err != nil {
+			return err
+		}
+		if err := GitDest(args[1]); err != nil {
+			return err
+		}
+	case "git-pull":
+		if len(args) != 1 {
+			return fmt.Errorf("invalid git repository")
+		}
+		if err := GitRepoPath(args[0]); err != nil {
+			return err
+		}
+	case "git-github", "git-github-test":
+		if len(args) != 0 {
+			return fmt.Errorf("invalid github request")
 		}
 	default:
 		return fmt.Errorf("unknown operation")
@@ -233,9 +335,13 @@ func AllowedPackage(name string) bool {
 	return ok
 }
 
+var phpFPMUnitRe = regexp.MustCompile(`^php[0-9]+\.[0-9]+-fpm$`)
+
 func AllowedUnit(name string) bool {
-	_, ok := allowedUnits[name]
-	return ok
+	if _, ok := allowedUnits[name]; ok {
+		return true
+	}
+	return phpFPMUnitRe.MatchString(name)
 }
 
 func AllowedAction(name string) bool {
@@ -248,6 +354,7 @@ func NodeVersion(v string) error {
 	case "node", "lts", "lts/*", "system":
 		return nil
 	}
+	v = strings.TrimPrefix(v, "v")
 	if versionRe.MatchString(v) && len(v) <= 32 {
 		return nil
 	}
@@ -715,6 +822,105 @@ var (
 	}
 )
 
+const MaxMySQLDump = 32 << 20
+
+func MySQLDump(sql string) error {
+	if len(strings.TrimSpace(sql)) == 0 || len(sql) > MaxMySQLDump {
+		return fmt.Errorf("SQL file must be between 1 byte and 32 MB")
+	}
+	if strings.ContainsRune(sql, 0) {
+		return fmt.Errorf("SQL file contains invalid characters")
+	}
+	return nil
+}
+
+var firewallCommentRe = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9 ._-]{0,31}$`)
+
+func FirewallPort(value string) error {
+	n, err := strconv.Atoi(value)
+	if err != nil || n < 1 || n > 65535 {
+		return fmt.Errorf("invalid firewall port")
+	}
+	return nil
+}
+
+func FirewallRule(port int, proto, from, comment string) error {
+	if port < 1 || port > 65535 {
+		return fmt.Errorf("invalid firewall port")
+	}
+	switch proto {
+	case "tcp", "udp", "any":
+	default:
+		return fmt.Errorf("firewall protocol must be tcp, udp, or any")
+	}
+	if from != "any" {
+		if ip := net.ParseIP(from); ip == nil {
+			if _, _, err := net.ParseCIDR(from); err != nil {
+				return fmt.Errorf("firewall source must be any, an IP address, or a network")
+			}
+		}
+	}
+	if comment != "" && comment != "-" && !firewallCommentRe.MatchString(comment) {
+		return fmt.Errorf("firewall comment must be letters, numbers, spaces, dots, or dashes")
+	}
+	return nil
+}
+
+func FirewallAccess(action, direction string, port int, proto, from, comment string, sshPort int) error {
+	if err := FirewallRule(port, proto, from, comment); err != nil {
+		return err
+	}
+	switch action {
+	case "allow", "deny", "reject", "limit":
+	default:
+		return fmt.Errorf("firewall action must be allow, deny, reject, or limit")
+	}
+	switch direction {
+	case "in", "out":
+	default:
+		return fmt.Errorf("firewall direction must be incoming or outgoing")
+	}
+	if (action == "allow" || action == "limit") && (port == 3306 || port == 33060) {
+		return fmt.Errorf("MySQL stays on this server and is reached through SSH")
+	}
+	if direction == "in" && port == sshPort && firewallFromAnywhere(from) && action != "allow" {
+		return fmt.Errorf("SSH on port %d must stay allowed", sshPort)
+	}
+	return nil
+}
+
+func FirewallPolicy(direction, policy string) error {
+	switch direction {
+	case "incoming", "outgoing":
+	default:
+		return fmt.Errorf("invalid firewall direction")
+	}
+	switch policy {
+	case "allow", "deny", "reject":
+		return nil
+	default:
+		return fmt.Errorf("firewall policy must be allow, deny, or reject")
+	}
+}
+
+func FirewallLogging(level string) error {
+	switch level {
+	case "off", "low", "medium", "high", "full":
+		return nil
+	default:
+		return fmt.Errorf("firewall logging must be off, low, medium, high, or full")
+	}
+}
+
+func firewallFromAnywhere(from string) bool {
+	switch strings.ToLower(strings.TrimSpace(from)) {
+	case "", "any", "anywhere", "0.0.0.0/0", "0.0.0.0":
+		return true
+	default:
+		return false
+	}
+}
+
 func MySQLDatabase(name string) error {
 	if _, reserved := reservedMySQLDatabases[strings.ToLower(name)]; reserved || !mysqlIdentRe.MatchString(name) {
 		return fmt.Errorf("invalid mysql database name")
@@ -761,6 +967,130 @@ func MySQLPrivileges(privs []string) error {
 	}
 	if _, all := seen["ALL"]; all && len(privs) != 1 {
 		return fmt.Errorf("ALL cannot be combined with other privileges")
+	}
+	return nil
+}
+
+func ServerLogin(name, host string, port int, user, password string) error {
+	name = strings.TrimSpace(name)
+	host = strings.TrimSpace(host)
+	user = strings.TrimSpace(user)
+	if len(name) < 1 || len(name) > 40 || strings.ContainsAny(name, "\r\n\x00") {
+		return fmt.Errorf("server name must be 1 to 40 characters")
+	}
+	if !regexp.MustCompile(`^[A-Za-z0-9](?:[A-Za-z0-9.-]{0,253}[A-Za-z0-9])?$`).MatchString(host) {
+		return fmt.Errorf("enter the server IP or hostname")
+	}
+	if port < 1 || port > 65535 {
+		return fmt.Errorf("ssh port must be between 1 and 65535")
+	}
+	if !regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9._-]{0,31}$`).MatchString(user) {
+		return fmt.Errorf("invalid ssh username")
+	}
+	if password != "" && (len(password) > 128 || strings.ContainsAny(password, "\r\n\x00")) {
+		return fmt.Errorf("ssh password must be 1 to 128 characters")
+	}
+	return nil
+}
+
+var (
+	gitNameRe = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9 ._'()-]{0,78}$`)
+	gitDirRe  = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,62}$`)
+	gitSegRe  = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._+-]{0,80}$`)
+)
+
+func GitName(value string) error {
+	if !gitNameRe.MatchString(value) || strings.ContainsAny(value, "\n\r\x00") {
+		return fmt.Errorf("invalid git name")
+	}
+	return nil
+}
+
+func GitDest(path string) error {
+	if err := GitRepoPath(path); err != nil {
+		return err
+	}
+	if !gitDirRe.MatchString(filepath.Base(path)) {
+		return fmt.Errorf("invalid directory")
+	}
+	return nil
+}
+
+func GitRepoPath(path string) error {
+	if path == "" || path != filepath.Clean(path) || strings.Contains(path, "..") {
+		return fmt.Errorf("invalid directory")
+	}
+	for _, root := range []string{"/var/www/", "/opt/", "/srv/", "/root/", "/home/"} {
+		if strings.HasPrefix(path, root) && len(path) > len(root) {
+			return nil
+		}
+	}
+	return fmt.Errorf("use a directory under /var/www, /opt, /srv, /root, or /home")
+}
+
+func GitURL(raw string) error {
+	if raw == "" || len(raw) > 300 || strings.ContainsAny(raw, " \t\n\r\x00?#\\'\"") || strings.Contains(raw, "..") {
+		return fmt.Errorf("invalid git address")
+	}
+	raw = strings.TrimSuffix(raw, "/")
+	switch {
+	case strings.HasPrefix(raw, "https://"), strings.HasPrefix(raw, "http://"):
+		rest := strings.TrimPrefix(strings.TrimPrefix(raw, "https://"), "http://")
+		if strings.Contains(rest, "@") {
+			return fmt.Errorf("git address cannot include a password")
+		}
+		return gitHTTP(rest)
+	case strings.HasPrefix(raw, "ssh://git@"):
+		return gitHTTP(strings.TrimPrefix(raw, "ssh://git@"))
+	case strings.HasPrefix(raw, "git@"):
+		host, path, ok := strings.Cut(strings.TrimPrefix(raw, "git@"), ":")
+		if !ok || strings.HasPrefix(path, "/") || strings.Contains(path, ":") {
+			return fmt.Errorf("invalid git address")
+		}
+		if err := gitHost(host); err != nil {
+			return err
+		}
+		return gitPath(path)
+	default:
+		return fmt.Errorf("invalid git address")
+	}
+}
+
+func gitHTTP(rest string) error {
+	host, path, ok := strings.Cut(rest, "/")
+	if !ok || path == "" {
+		return fmt.Errorf("invalid git address")
+	}
+	if err := gitHost(host); err != nil {
+		return err
+	}
+	return gitPath(path)
+}
+
+func gitHost(host string) error {
+	name := host
+	if h, port, ok := strings.Cut(host, ":"); ok {
+		n, err := strconv.Atoi(port)
+		if err != nil || n < 1 || n > 65535 || strings.Contains(h, ":") {
+			return fmt.Errorf("invalid git address")
+		}
+		name = h
+	}
+	if name == "" || !domainRe.MatchString(name) {
+		return fmt.Errorf("invalid git address")
+	}
+	return nil
+}
+
+func gitPath(path string) error {
+	path = strings.TrimSuffix(path, ".git")
+	if path == "" {
+		return fmt.Errorf("invalid git address")
+	}
+	for _, part := range strings.Split(path, "/") {
+		if !gitSegRe.MatchString(part) {
+			return fmt.Errorf("invalid git address")
+		}
 	}
 	return nil
 }

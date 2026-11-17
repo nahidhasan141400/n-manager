@@ -4,13 +4,12 @@ import (
 	"bufio"
 	"context"
 	"fmt"
-	"os"
-	"path/filepath"
 	"regexp"
 	"strings"
 
 	"n-manager/internal/pkgmgr"
 	"n-manager/internal/priv"
+	"n-manager/internal/remote"
 	"n-manager/internal/systemd"
 )
 
@@ -45,13 +44,13 @@ func Database(ctx context.Context, id string) (Engine, error) {
 	if !ok {
 		return Engine{}, fmt.Errorf("unknown database")
 	}
-	mgr, err := pkgmgr.Detect()
+	mgr, err := pkgmgr.Detect(ctx)
 	if err != nil {
 		return Engine{}, err
 	}
 	eng := Engine{ID: sp.id, Label: sp.label, Manager: mgr.ID, Config: map[string]string{}}
 	for _, pkg := range sp.packages {
-		installed, version, qerr := pkgmgr.Installed(mgr.ID, pkg)
+		installed, version, qerr := pkgmgr.Installed(ctx, mgr.ID, pkg)
 		if qerr != nil {
 			return eng, qerr
 		}
@@ -68,15 +67,15 @@ func Database(ctx context.Context, id string) (Engine, error) {
 	if eng.Package == "" {
 		eng.Package = sp.packages[0]
 	}
-	st := systemd.Probe(sp.units)
+	st := systemd.Probe(ctx, sp.units)
 	eng.Unit = st.Unit
 	eng.Active = st.Active
 	eng.Enabled = st.Enabled
 	eng.Exists = st.Exists
 	if id == "mysql" {
-		eng.Config = readMySQLConfig()
+		eng.Config = readMySQLConfig(ctx)
 	} else {
-		eng.Config = readPostgresConfig()
+		eng.Config = readPostgresConfig(ctx)
 	}
 	return eng, nil
 }
@@ -86,12 +85,12 @@ func InstallDatabase(ctx context.Context, ex priv.Executor, id string) (string, 
 	if !ok {
 		return "", fmt.Errorf("unknown database")
 	}
-	mgr, err := pkgmgr.Detect()
+	mgr, err := pkgmgr.Detect(ctx)
 	if err != nil {
 		return "", err
 	}
 	pkg := sp.packages[0]
-	if len(sp.packages) > 1 && !pkgmgr.Available(mgr.ID, pkg) && pkgmgr.Available(mgr.ID, sp.packages[1]) {
+	if len(sp.packages) > 1 && !pkgmgr.Available(ctx, mgr.ID, pkg) && pkgmgr.Available(ctx, mgr.ID, sp.packages[1]) {
 		pkg = sp.packages[1]
 	}
 	unit := sp.units[0]
@@ -153,14 +152,14 @@ var (
 	pgDataRe  = regexp.MustCompile(`(?m)^\s*data_directory\s*=\s*'?([^'\s#]+)'?`)
 )
 
-func readMySQLConfig() map[string]string {
+func readMySQLConfig(ctx context.Context) map[string]string {
 	out := map[string]string{}
 	paths := []string{"/etc/mysql/my.cnf", "/etc/my.cnf"}
-	paths = append(paths, glob("/etc/mysql/mysql.conf.d/*.cnf")...)
-	paths = append(paths, glob("/etc/mysql/mariadb.conf.d/*.cnf")...)
-	paths = append(paths, glob("/etc/my.cnf.d/*.cnf")...)
+	paths = append(paths, glob(ctx, "/etc/mysql/mysql.conf.d/*.cnf")...)
+	paths = append(paths, glob(ctx, "/etc/mysql/mariadb.conf.d/*.cnf")...)
+	paths = append(paths, glob(ctx, "/etc/my.cnf.d/*.cnf")...)
 	for _, path := range paths {
-		b, err := os.ReadFile(path)
+		b, err := remote.ReadFile(ctx, path)
 		if err != nil {
 			continue
 		}
@@ -187,10 +186,10 @@ func readMySQLConfig() map[string]string {
 	return out
 }
 
-func readPostgresConfig() map[string]string {
+func readPostgresConfig(ctx context.Context) map[string]string {
 	out := map[string]string{"listen_addresses": "unknown"}
-	for _, path := range glob("/etc/postgresql/*/*/postgresql.conf") {
-		b, err := os.ReadFile(path)
+	for _, path := range glob(ctx, "/etc/postgresql/*/*/postgresql.conf") {
+		b, err := remote.ReadFile(ctx, path)
 		if err != nil {
 			continue
 		}
@@ -209,8 +208,8 @@ func readPostgresConfig() map[string]string {
 	return out
 }
 
-func glob(pattern string) []string {
-	m, err := filepath.Glob(pattern)
+func glob(ctx context.Context, pattern string) []string {
+	m, err := remote.Glob(ctx, pattern)
 	if err != nil {
 		return nil
 	}
@@ -218,12 +217,15 @@ func glob(pattern string) []string {
 }
 
 func ReadConfigValue(path string, key string) string {
-	f, err := os.Open(path)
+	b, err := remote.ReadFile(context.Background(), path)
 	if err != nil {
 		return ""
 	}
-	defer f.Close()
-	sc := bufio.NewScanner(f)
+	return configValue(string(b), key)
+}
+
+func configValue(text, key string) string {
+	sc := bufio.NewScanner(strings.NewReader(text))
 	prefix := key + "="
 	for sc.Scan() {
 		line := strings.TrimSpace(sc.Text())

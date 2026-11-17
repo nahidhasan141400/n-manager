@@ -1,6 +1,7 @@
 package ftp
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
@@ -39,7 +40,7 @@ func TestParseConfRoundTrip(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "vsftpd.conf")
 	os.WriteFile(path, []byte(Render(spec)), 0o644)
-	got, err := parseConf(path)
+	got, err := parseConf(context.Background(), path)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -56,7 +57,7 @@ func TestListUsers(t *testing.T) {
 	os.WriteFile(list, []byte("# comment\nftpdemo\n"), 0o644)
 	os.WriteFile(passwd, []byte("ftpdemo:x:1001:1001::/srv/ftp/ftpdemo:/usr/sbin/nologin\n"), 0o644)
 	os.WriteFile(shadow, []byte("ftpdemo:!$6$hash:19000:0:99999:7:::\n"), 0o644)
-	users := listUsers(list, passwd, shadow, true)
+	users := listUsers(context.Background(), list, passwd, shadow, true)
 	if len(users) != 1 || users[0].Name != "ftpdemo" || users[0].Home != "/srv/ftp/ftpdemo" || users[0].Locked == nil || !*users[0].Locked {
 		t.Fatalf("users %#v", users)
 	}
@@ -68,7 +69,7 @@ func TestListHomesSkipsHiddenSymlinksAndHeavyDirs(t *testing.T) {
 	os.MkdirAll(filepath.Join(root, "node_modules", "pkg"), 0o755)
 	os.MkdirAll(filepath.Join(root, ".hidden", "secret"), 0o755)
 	os.Symlink(filepath.Join(root, "projects"), filepath.Join(root, "link"))
-	got := ListHomes([]string{root}, 4, 20)
+	got := ListHomes(context.Background(), []string{root}, 4, 20)
 	joined := strings.Join(got, "\n")
 	if !strings.Contains(joined, filepath.Join(root, "projects", "site")) {
 		t.Fatalf("missing nested directory: %#v", got)

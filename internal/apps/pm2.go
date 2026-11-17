@@ -4,12 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
 
+	"n-manager/internal/remote"
 	"n-manager/internal/validate"
 )
 
@@ -48,12 +47,12 @@ type pm2Dump []struct {
 
 func PM2(ctx context.Context) PM2Status {
 	st := PM2Status{Processes: []PM2Process{}}
-	bin, home := nodeBinDir()
+	bin, home := nodeBinDir(ctx)
 	if bin == "" {
 		return st
 	}
 	pm2 := filepath.Join(bin, "pm2")
-	if info, err := os.Stat(pm2); err != nil || info.IsDir() {
+	if info, err := remote.Stat(ctx, pm2); err != nil || info.IsDir() {
 		return st
 	}
 	st.Installed = true
@@ -67,8 +66,8 @@ func PM2(ctx context.Context) PM2Status {
 	return st
 }
 
-func ManagedNVM() bool {
-	dir, _ := locateNVM()
+func ManagedNVM(ctx context.Context) bool {
+	dir, _ := locateNVM(ctx)
 	return dir == NVMDir
 }
 
@@ -76,7 +75,7 @@ func PM2Run(ctx context.Context, action, name, script string) (string, error) {
 	if err := validate.PM2Operation(pm2Args(action, name, script)); err != nil {
 		return "", err
 	}
-	bin, home := nodeBinDir()
+	bin, home := nodeBinDir(ctx)
 	if bin == "" {
 		return "", fmt.Errorf("node is not installed")
 	}
@@ -85,7 +84,7 @@ func PM2Run(ctx context.Context, action, name, script string) (string, error) {
 		return trimOutput(out), err
 	}
 	pm2 := filepath.Join(bin, "pm2")
-	if _, err := os.Stat(pm2); err != nil {
+	if _, err := remote.Stat(ctx, pm2); err != nil {
 		return "", fmt.Errorf("pm2 is not installed")
 	}
 	out, err := runBinResult(ctx, bin, home, "pm2", pm2Command(action, name, script)...)
@@ -124,18 +123,18 @@ func parsePM2(raw string) []PM2Process {
 	return out
 }
 
-func nodeBinDir() (bin, home string) {
-	dir, home := locateNVM()
-	if _, err := os.Stat(filepath.Join(dir, "nvm.sh")); err != nil {
+func nodeBinDir(ctx context.Context) (bin, home string) {
+	dir, home := locateNVM(ctx)
+	if _, err := remote.Stat(ctx, filepath.Join(dir, "nvm.sh")); err != nil {
 		return "", home
 	}
-	versions := installedVersions(dir)
-	def := matchInstalled(resolveDefault(filepath.Join(dir, "alias"), 5), versions)
-	return nodeBin(dir, def), home
+	versions := installedVersions(ctx, dir)
+	def := matchInstalled(resolveDefault(ctx, filepath.Join(dir, "alias"), 5), versions)
+	return nodeBin(ctx, dir, def), home
 }
 
-func installedVersions(nvmDir string) []string {
-	entries, err := os.ReadDir(filepath.Join(nvmDir, "versions", "node"))
+func installedVersions(ctx context.Context, nvmDir string) []string {
+	entries, err := remote.ReadDir(ctx, filepath.Join(nvmDir, "versions", "node"))
 	if err != nil {
 		return nil
 	}
@@ -196,19 +195,18 @@ func trimOutput(text string) string {
 }
 
 func runBinResult(ctx context.Context, bin, home, name string, args ...string) (string, error) {
-	cmd := exec.CommandContext(ctx, filepath.Join(bin, name), args...)
-	env := append(os.Environ(), "PATH="+bin+":"+os.Getenv("PATH"))
-	if home != "" {
-		env = append(env, "HOME="+home)
+	if home == "" {
+		home = "/tmp"
 	}
-	cmd.Env = env
-	out, err := cmd.CombinedOutput()
-	text := strings.TrimSpace(string(out))
+	argv := []string{"HOME=" + home, "PATH=" + bin + ":/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin", filepath.Join(bin, name)}
+	argv = append(argv, args...)
+	out, err := remote.Run(ctx, "env", argv, "")
+	text := strings.TrimSpace(out)
 	if err != nil {
 		if text == "" {
 			return "", err
 		}
-		return text, fmt.Errorf("%s", text)
+		return text, err
 	}
 	return text, nil
 }

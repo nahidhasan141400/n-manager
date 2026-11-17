@@ -1,10 +1,11 @@
 package pkgmgr
 
 import (
+	"context"
 	"fmt"
-	"os"
-	"os/exec"
 	"strings"
+
+	"n-manager/internal/remote"
 )
 
 type Manager struct {
@@ -13,8 +14,8 @@ type Manager struct {
 	Version string `json:"version"`
 }
 
-func Detect() (Manager, error) {
-	b, err := os.ReadFile("/etc/os-release")
+func Detect(ctx context.Context) (Manager, error) {
+	b, err := remote.ReadFile(ctx, "/etc/os-release")
 	if err != nil {
 		return Manager{}, fmt.Errorf("read os-release: %w", err)
 	}
@@ -54,35 +55,37 @@ func containsAny(s string, parts ...string) bool {
 	return false
 }
 
-func Installed(mgr, pkg string) (bool, string, error) {
+func Installed(ctx context.Context, mgr, pkg string) (bool, string, error) {
 	switch mgr {
 	case "apt":
-		out, err := exec.Command("dpkg-query", "-W", "-f", "${Status}\t${Version}", pkg).CombinedOutput()
+		out, err := remote.Run(ctx, "dpkg-query", []string{"-W", "-f", "${Status}\t${Version}", pkg}, "")
 		if err != nil {
 			return false, "", nil
 		}
-		status, version, _ := strings.Cut(strings.TrimSpace(string(out)), "\t")
+		status, version, _ := strings.Cut(strings.TrimSpace(out), "\t")
 		if !strings.Contains(status, "install ok installed") {
 			return false, "", nil
 		}
 		return true, version, nil
 	case "dnf":
-		out, err := exec.Command("rpm", "-q", "--qf", "%{VERSION}-%{RELEASE}", pkg).CombinedOutput()
+		out, err := remote.Run(ctx, "rpm", []string{"-q", "--qf", "%{VERSION}-%{RELEASE}", pkg}, "")
 		if err != nil {
 			return false, "", nil
 		}
-		return true, strings.TrimSpace(string(out)), nil
+		return true, strings.TrimSpace(out), nil
 	default:
 		return false, "", fmt.Errorf("unsupported package manager")
 	}
 }
 
-func Available(mgr, pkg string) bool {
+func Available(ctx context.Context, mgr, pkg string) bool {
 	switch mgr {
 	case "apt":
-		return exec.Command("apt-cache", "show", pkg).Run() == nil
+		_, err := remote.Run(ctx, "apt-cache", []string{"show", pkg}, "")
+		return err == nil
 	case "dnf":
-		return exec.Command("dnf", "info", "-q", pkg).Run() == nil
+		_, err := remote.Run(ctx, "dnf", []string{"info", "-q", pkg}, "")
+		return err == nil
 	default:
 		return false
 	}

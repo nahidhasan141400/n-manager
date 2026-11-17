@@ -3,7 +3,7 @@ import type { EChartsOption } from "echarts";
 import { ArrowDown, ArrowUp, Clock, Cpu, Globe, HardDrive, MemoryStick, RefreshCw, Server } from "lucide-react";
 import { api } from "../api";
 import { Chart, chartTheme } from "../components/Chart";
-import { Button, Card, Meter } from "../components/ui";
+import { Button, Card, Meter, Placeholder } from "../components/ui";
 import { formatBytes, formatTime, formatUptime, pct } from "../format";
 import type { Metrics, SystemInfo } from "../types";
 
@@ -37,6 +37,8 @@ export function Dashboard({ theme }: { theme: string }) {
   const history = metrics?.history ?? [];
   const root = metrics?.current.disks.find((disk) => disk.mount === "/") ?? metrics?.current.disks[0];
 
+  const pending = !metrics && !error;
+
   return (
     <div className="space-y-4">
       <div className="flex justify-end">
@@ -44,32 +46,30 @@ export function Dashboard({ theme }: { theme: string }) {
       </div>
       {error && <p className="text-sm text-[var(--danger)]">{error}</p>}
       <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
-        <Stat icon={<Cpu size={16} />} title="CPU" value={pct(metrics?.current.cpu_percent ?? 0)} detail={`${metrics?.current.cpu_cores ?? info?.cpu_cores ?? 0} · ${metrics?.current.load1.toFixed(2) ?? "0"}`} meter={metrics?.current.cpu_percent} />
-        <Stat icon={<MemoryStick size={16} />} title="RAM" value={pct(metrics?.current.mem_percent ?? 0)} detail={`${formatBytes(metrics?.current.mem_used ?? 0)} / ${formatBytes(metrics?.current.mem_total ?? 0)}`} meter={metrics?.current.mem_percent} />
-        <Stat icon={<HardDrive size={16} />} title="Disk" value={pct(root?.percent ?? 0)} detail={root ? `${formatBytes(root.used)} / ${formatBytes(root.total)}` : "—"} meter={root?.percent} />
-        <Stat icon={<Globe size={16} />} title="Net" value={formatBytes(metrics?.current.net_rx_bps ?? 0) + "/s"} detail={`${formatBytes(metrics?.current.net_tx_bps ?? 0)}/s`} />
+        <Stat pending={pending} icon={<Cpu size={16} />} title="CPU" value={pct(metrics?.current.cpu_percent ?? 0)} detail={`${metrics?.current.cpu_cores ?? info?.cpu_cores ?? 0} · ${metrics?.current.load1.toFixed(2) ?? "0"}`} meter={metrics?.current.cpu_percent} />
+        <Stat pending={pending} icon={<MemoryStick size={16} />} title="RAM" value={pct(metrics?.current.mem_percent ?? 0)} detail={`${formatBytes(metrics?.current.mem_used ?? 0)} / ${formatBytes(metrics?.current.mem_total ?? 0)}`} meter={metrics?.current.mem_percent} />
+        <Stat pending={pending} icon={<HardDrive size={16} />} title="Disk" value={pct(root?.percent ?? 0)} detail={root ? `${formatBytes(root.used)} / ${formatBytes(root.total)}` : "—"} meter={root?.percent} />
+        <Stat pending={pending} icon={<Globe size={16} />} title="Net" value={formatBytes(metrics?.current.net_rx_bps ?? 0) + "/s"} detail={`${formatBytes(metrics?.current.net_tx_bps ?? 0)}/s`} />
       </div>
-      {info && (
-        <Card>
-          <dl className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-            <Info icon={<Server size={14} />} label="Host" value={info.hostname} />
-            <Info icon={<Cpu size={14} />} label="CPU" value={info.cpu_model || "—"} />
-            <Info icon={<Clock size={14} />} label="Up" value={formatUptime(info.uptime_seconds)} />
-            <Info icon={<Globe size={14} />} label="OS" value={info.os || info.distro} />
-            <Info label="Kernel" value={info.kernel} />
-            <Info label="LAN" value={info.private_ips[0] || "—"} />
-            <Info label="WAN" value={info.public_ip || "—"} />
-          </dl>
-        </Card>
-      )}
+      <Card loading={pending || !info}>
+        <dl className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+          <Info pending={!info} icon={<Server size={14} />} label="Host" value={info?.hostname || ""} />
+          <Info pending={!info} icon={<Cpu size={14} />} label="CPU" value={info?.cpu_model || "—"} />
+          <Info pending={!info} icon={<Clock size={14} />} label="Up" value={info ? formatUptime(info.uptime_seconds) : ""} />
+          <Info pending={!info} icon={<Globe size={14} />} label="OS" value={info?.os || info?.distro || ""} />
+          <Info pending={!info} label="Kernel" value={info?.kernel || ""} />
+          <Info pending={!info} label="LAN" value={info?.private_ips[0] || "—"} />
+          <Info pending={!info} label="WAN" value={info?.public_ip || "—"} />
+        </dl>
+      </Card>
       <div className="grid gap-3 xl:grid-cols-2" data-theme={theme}>
-        <Card title="CPU"><Chart option={lineOption("CPU %", history.map((p) => [p.t, p.cpu]), colors.accent, colors)} /></Card>
-        <Card title="RAM"><Chart option={lineOption("Memory %", history.map((p) => [p.t, p.mem]), colors.green, colors)} /></Card>
-        <Card title="Network"><Chart option={networkOption(history, colors)} /></Card>
-        <Card title="Disk"><Chart option={diskOption(metrics?.current.disks ?? [], colors)} /></Card>
-        <Card title="Trends"><Chart option={trendOption(history, colors)} /></Card>
+        <Card title="CPU" loading={pending}>{pending ? <Placeholder className="h-56 w-full" /> : <Chart option={lineOption("CPU %", history.map((p) => [p.t, p.cpu]), colors.accent, colors)} />}</Card>
+        <Card title="RAM" loading={pending}>{pending ? <Placeholder className="h-56 w-full" /> : <Chart option={lineOption("Memory %", history.map((p) => [p.t, p.mem]), colors.green, colors)} />}</Card>
+        <Card title="Network" loading={pending}>{pending ? <Placeholder className="h-56 w-full" /> : <Chart option={networkOption(history, colors)} />}</Card>
+        <Card title="Disk" loading={pending}>{pending ? <Placeholder className="h-56 w-full" /> : <Chart option={diskOption(metrics?.current.disks ?? [], colors)} />}</Card>
+        <Card title="Trends" loading={pending}>{pending ? <Placeholder className="h-56 w-full" /> : <Chart option={trendOption(history, colors)} />}</Card>
       </div>
-      <Card title="Interfaces">
+      <Card title="Interfaces" loading={pending}>
         <table className="w-full text-left text-sm">
           <thead className="text-[var(--muted)]">
             <tr>
@@ -81,6 +81,11 @@ export function Dashboard({ theme }: { theme: string }) {
             </tr>
           </thead>
           <tbody>
+            {pending && Array.from({ length: 3 }, (_, index) => (
+              <tr key={index} className="border-t border-[var(--border)]">
+                <td className="py-2" colSpan={5}><Placeholder className="h-4 w-full" /></td>
+              </tr>
+            ))}
             {(metrics?.current.net ?? []).map((iface) => (
               <tr key={iface.name} className="border-t border-[var(--border)]">
                 <td className="py-2">{iface.name}</td>
@@ -97,22 +102,22 @@ export function Dashboard({ theme }: { theme: string }) {
   );
 }
 
-function Stat({ icon, title, value, detail, meter }: { icon: ReactNode; title: string; value: string; detail: string; meter?: number }) {
+function Stat({ icon, title, value, detail, meter, pending }: { icon: ReactNode; title: string; value: string; detail: string; meter?: number; pending?: boolean }) {
   return (
-    <section className="rounded-md border border-[var(--border)] bg-[var(--card)] p-4">
+    <section className={`rounded-md p-4 ${pending ? "gradient-frame" : "border border-[var(--border)] bg-[var(--card)]"}`}>
       <div className="flex items-center gap-1.5 text-sm text-[var(--muted)]">{icon}{title}</div>
-      <div className="my-1 text-xl font-semibold">{value}</div>
-      <div className="mb-3 text-xs text-[var(--muted)]">{detail}</div>
-      {meter !== undefined && <Meter value={meter} />}
+      {pending ? <Placeholder className="my-2 h-6 w-16" /> : <div className="my-1 text-xl font-semibold">{value}</div>}
+      {pending ? <Placeholder className="mb-3 h-3 w-28" /> : <div className="mb-3 text-xs text-[var(--muted)]">{detail}</div>}
+      {pending ? <Placeholder className="h-1.5 w-full rounded-full" /> : meter !== undefined && <Meter value={meter} />}
     </section>
   );
 }
 
-function Info({ icon, label, value }: { icon?: ReactNode; label: string; value: string }) {
+function Info({ icon, label, value, pending }: { icon?: ReactNode; label: string; value: string; pending?: boolean }) {
   return (
     <div title={label}>
       <dt className="flex items-center gap-1 text-xs text-[var(--muted)]">{icon}{label}</dt>
-      <dd className="truncate">{value || "—"}</dd>
+      <dd className="truncate">{pending ? <Placeholder className="mt-1 h-4 w-24" /> : value || "—"}</dd>
     </div>
   );
 }
